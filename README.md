@@ -51,6 +51,10 @@
 
 ![设置界面模式与自定义强调色](docs/screenshots/settings-interface-color-20260926.png)
 
+## 本改版致谢
+
+- [万象拼音](https://github.com/amzxyz/rime-wanxiang)（[amzxyz](https://github.com/amzxyz) 及项目贡献者）：本改版内置万象拼音 Lite，并提供配套语法模型的可选下载与更新入口。感谢万象项目持续维护输入方案、词库和文档。
+
 ## 下载、使用与配置
 
 1. 从[本仓库的 Release 页面](https://github.com/nbzQing/weasel/releases/latest)下载 Windows 安装包。发布页面会同时标明所基于的官方版本与本改版版本；安装包包含 x64 与 x86 程序，语法模型按需在设置页另行下载。

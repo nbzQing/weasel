@@ -54,9 +54,6 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: Fetch all tags
-        run: git fetch --tags
-
       - name: Verify shared version numbering
         if: matrix.variant == 'msbuild'
         shell: pwsh

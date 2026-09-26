@@ -38,7 +38,7 @@ class WanxiangUpdateManager {
     bool from_cnb = false;
   };
 
-  static constexpr wchar_t kInstalledVersion[] = L"17.10.0";
+  static constexpr wchar_t kInstalledVersion[] = L"18.0.11";
 
   static Frequency LoadFrequency(const std::string& schema_id);
   static bool SaveFrequency(const std::string& schema_id, Frequency frequency);

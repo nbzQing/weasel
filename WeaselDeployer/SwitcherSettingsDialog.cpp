@@ -108,13 +108,16 @@ constexpr ModeFile kModeFiles[] = {
     {L"wanxiang_lite.custom.yaml",
      "((?:^|\\n)[ \\t]*-[ \\t]*wanxiang_algebra:/lite/)[^\\s#]+"},
     {L"wanxiang_mixedcode.custom.yaml",
-     "((?:^|\\n)[ \\t]*__patch:[ \\t]*wanxiang_algebra:/mixed/)"
+     "((?:^|\\n)[ \\t]*(?:-[ \\t]*|__patch:[ \\t]*)"
+     "wanxiang_algebra:/mixed/)"
      "[^\\s#]+"},
     {L"wanxiang_reverse.custom.yaml",
-     "((?:^|\\n)[ \\t]*__include:[ \\t]*wanxiang_algebra:/reverse/)"
+     "((?:^|\\n)[ \\t]*(?:-[ \\t]*|__include:[ \\t]*)"
+     "wanxiang_algebra:/reverse/)"
      "[^\\s#]+"},
     {L"wanxiang_english.custom.yaml",
-     "((?:^|\\n)[ \\t]*__patch:[ \\t]*wanxiang_algebra:/english/)"
+     "((?:^|\\n)[ \\t]*(?:-[ \\t]*|__patch:[ \\t]*)"
+     "wanxiang_algebra:/english/)"
      "[^\\s#]+"},
 };
 
@@ -3070,7 +3073,8 @@ void SwitcherSettingsDialog::UpdateCheckButton() {
     label = LocalText(L"更新 · ", L"更新 · ", L"Updates · ") +
             std::to_wstring(count) + LocalText(L" 项", L" 項", L"");
   } else {
-    label = LocalText(L"检查更新", L"檢查更新", L"Check updates");
+    label =
+        LocalText(L"检查方案更新", L"檢查方案更新", L"Check schema updates");
   }
   check_button_accent_ = count != 0;
   ::SetWindowTextW(button, label.c_str());

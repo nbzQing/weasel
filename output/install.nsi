@@ -327,8 +327,7 @@ program_files:
   File "data\custom\*.custom.yaml"
   ; opencc data files
   SetOutPath $INSTDIR\data\opencc
-  File "data\opencc\*.json"
-  File "data\opencc\*.ocd*"
+  File /r "data\opencc\*.*"
   ; images
   SetOutPath $INSTDIR\data\preview
   File "data\preview\*.png"
@@ -369,11 +368,17 @@ program_files:
 
   ; run as user...
   IfSilent deploy_silently
-  ExecWait "$INSTDIR\WeaselDeployer.exe /install"
-  GoTo deploy_done
+  ExecWait '"$INSTDIR\WeaselDeployer.exe" /install' $R3
+  IfErrors deploy_failed
+  StrCmp $R3 "0" deploy_done deploy_failed
 
   deploy_silently:
-  ExecWait "$INSTDIR\WeaselDeployer.exe /deploy"
+  ExecWait '"$INSTDIR\WeaselDeployer.exe" /deploy' $R3
+  IfErrors deploy_failed
+  StrCmp $R3 "0" deploy_done deploy_failed
+  deploy_failed:
+  SetErrorLevel 1
+  Abort
   deploy_done:
 
   ; don't redirect on 64 bit system for auto run setting
@@ -388,13 +393,17 @@ program_files:
   Exec "$INSTDIR\WeaselServer.exe"
 
   ; option CheckForUpdates
-  IfSilent DisableAutoCheckUpdate
+  IfSilent KeepAutoCheckUpdate
   MessageBox MB_YESNO|MB_ICONINFORMATION "$(AUTOCHKUPDATE)" IDYES EnableAutoCheckUpdate
   DisableAutoCheckUpdate:
   WriteRegStr HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates" "0"
   GoTo end
   EnableAutoCheckUpdate:
   WriteRegStr HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates" "1"
+  GoTo end
+  KeepAutoCheckUpdate:
+  ReadRegStr $R4 HKCU "Software\Rime\Weasel\Updates" "CheckForUpdates"
+  StrCmp $R4 "" DisableAutoCheckUpdate end
   end:
 
   ; Prompt reboot

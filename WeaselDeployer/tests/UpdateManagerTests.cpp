@@ -135,9 +135,9 @@ int main(int argc, char** argv) {
                   result.latest_scheme_size != 0 &&
                   result.latest_scheme_sha256.size() == 64,
               "live scheme metadata was incomplete");
-      Require(WanxiangUpdateManager::IsNewerVersion(
-                  result.latest_tag, WanxiangUpdateManager::kInstalledVersion),
-              "live release check did not find a newer stable version");
+      Require(!WanxiangUpdateManager::IsNewerVersion(
+                  WanxiangUpdateManager::kInstalledVersion, result.latest_tag),
+              "live release check returned an older stable version");
       std::wcout << L"Live release check found " << result.latest_tag << L'\n';
     }
     std::cout << "Update manager tests passed\n";

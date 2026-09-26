@@ -7,6 +7,7 @@
 #include <winhttp.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <iomanip>
@@ -179,6 +180,35 @@ std::wstring NormalizedVersion(std::wstring version) {
   while (!version.empty() && iswspace(version.back()))
     version.pop_back();
   return version;
+}
+
+std::wstring ReadVersionFile(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  std::string version;
+  if (!std::getline(input, version))
+    return {};
+  if (version.compare(0, 3, "\xef\xbb\xbf") == 0)
+    version.erase(0, 3);
+  return NormalizedVersion(u8tow(version));
+}
+
+bool IsBundledVersionNewer(const std::wstring& bundled,
+                           const std::wstring& current) {
+  const auto parse = [](const std::wstring& version,
+                        std::array<unsigned long, 3>* parts) {
+    std::wistringstream input(version);
+    wchar_t first_dot = 0;
+    wchar_t second_dot = 0;
+    if (!(input >> (*parts)[0] >> first_dot >> (*parts)[1] >> second_dot >>
+          (*parts)[2]) ||
+        first_dot != L'.' || second_dot != L'.')
+      return false;
+    return input.peek() == std::char_traits<wchar_t>::eof();
+  };
+  std::array<unsigned long, 3> bundled_parts = {};
+  std::array<unsigned long, 3> current_parts = {};
+  return parse(bundled, &bundled_parts) &&
+         (!parse(current, &current_parts) || bundled_parts > current_parts);
 }
 }  // namespace
 
@@ -501,11 +531,21 @@ bool WanxiangSchemeManager::IsPreserved(
     return true;
   }
 
-  if (first == L"custom" || first == L"lua")
-    return false;
+  if (first == L"custom")
+    return !(generic.compare(0, 16, L"custom/wanxiang_") == 0 &&
+             EndsWith(filename, L".custom.yaml"));
+  if (first == L"lua")
+    return generic.compare(0, 13, L"lua/wanxiang/") != 0 &&
+           generic.compare(0, 9, L"lua/data/") != 0;
+  if (first == L"opencc")
+    return generic.compare(0, 16, L"opencc/wanxiang/") != 0 &&
+           !(relative.parent_path() == L"opencc" &&
+             filename.compare(0, 9, L"wanxiang_") == 0 &&
+             EndsWith(filename, L".json"));
   if (first == L"dicts") {
     return !(EndsWith(filename, L".lite.dict.yaml") ||
-             filename == L"en.dict.yaml" || filename == L"mixed.dict.yaml");
+             filename == L"en.dict.yaml" || filename == L"mixed.dict.yaml" ||
+             filename == L"abbrev.dict.yaml");
   }
   if (relative.has_parent_path() && relative.parent_path() != L".")
     return true;
@@ -514,13 +554,18 @@ bool WanxiangSchemeManager::IsPreserved(
       L"version.txt",
       L"wanxiang_lite.dict.yaml",
       L"wanxiang_lite.schema.yaml",
+      L"wanxiang_abbrev.schema.yaml",
+      L"wanxiang_phrase.schema.yaml",
       L"wanxiang_algebra.yaml",
       L"wanxiang_symbols.yaml",
       L"custom_phrase.dict.yaml",
       L"wanxiang_abbrev.dict.yaml",
       L"wanxiang_english.dict.yaml",
+      L"wanxiang_english.schema.yaml",
       L"wanxiang_mixedcode.dict.yaml",
+      L"wanxiang_mixedcode.schema.yaml",
       L"wanxiang_reverse.dict.yaml",
+      L"wanxiang_reverse.schema.yaml",
   };
   return std::none_of(
       std::begin(kLiteRootFiles), std::end(kLiteRootFiles),
@@ -557,6 +602,9 @@ bool WanxiangSchemeManager::InstallStaged(
     }
     const auto destination = user_data_ / relative;
     const bool existed = std::filesystem::exists(destination, file_error);
+    // Keep personal phrases in the editable dictionary across Lite updates.
+    if (relative == L"custom_phrase.dict.yaml" && existed)
+      continue;
     if (file_error ||
         (existed && !std::filesystem::is_regular_file(destination))) {
       if (error)
@@ -671,6 +719,42 @@ bool WanxiangSchemeManager::PrepareAndInstall(
   if (!ValidateStaging(release, &source_root, error))
     return false;
   return InstallStaged(source_root, error);
+}
+
+bool WanxiangSchemeManager::InstallBundledIfNewer(
+    const std::filesystem::path& bundled_data,
+    bool* updated,
+    std::wstring* error) {
+  if (updated)
+    *updated = false;
+  if (!RecoverInterruptedTransaction(error))
+    return false;
+  const auto bundled_version = ReadVersionFile(bundled_data / L"version.txt");
+  if (bundled_version != WanxiangUpdateManager::kInstalledVersion ||
+      !std::filesystem::is_regular_file(bundled_data /
+                                        L"wanxiang_lite.schema.yaml") ||
+      !std::filesystem::is_directory(bundled_data / L"dicts") ||
+      !std::filesystem::is_directory(bundled_data / L"lua") ||
+      !std::filesystem::is_directory(bundled_data / L"opencc")) {
+    if (error)
+      *error = L"安装包中的万象 Lite 文件不完整或版本不匹配。";
+    return false;
+  }
+  const auto current_version = ReadVersionFile(user_data_ / L"version.txt");
+  if (!current_version.empty() &&
+      !IsBundledVersionNewer(bundled_version, current_version))
+    return true;
+  installed_tag_ = bundled_version;
+  if (!InstallStaged(bundled_data, error))
+    return false;
+  if (!Commit(error)) {
+    std::wstring rollback_error;
+    Rollback(&rollback_error);
+    return false;
+  }
+  if (updated)
+    *updated = true;
+  return true;
 }
 
 bool WanxiangSchemeManager::Rollback(std::wstring* error) {

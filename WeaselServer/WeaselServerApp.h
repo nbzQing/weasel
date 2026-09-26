@@ -39,20 +39,12 @@ class WeaselServerApp {
   }
 
   static bool check_update() {
-    // when checked manually, show testing versions too
-    std::string feed_url = GetCustomResource("ManualUpdateFeedURL", "APPCAST");
-    std::wstring channel{};
-    auto ret = RegGetStringValue(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel",
-                                 L"UpdateChannel", channel);
-    if (!ret && channel == L"testing") {
-      feed_url = GetCustomResource("TestingManualUpdateFeedURL", "APPCAST");
-    }
-    if (!feed_url.empty()) {
-      win_sparkle_set_appcast_url(feed_url.c_str());
-    }
     win_sparkle_check_update_with_ui();
     return true;
   }
+
+  static constexpr const char* kAppcastUrl =
+      "https://github.com/nbzQing/weasel/releases/latest/download/appcast.xml";
 
   static fs::path install_dir() {
     WCHAR exe_path[MAX_PATH] = {0};
@@ -63,7 +55,7 @@ class WeaselServerApp {
  public:
   WeaselServerApp();
   ~WeaselServerApp();
-  int Run();
+  int Run(bool manual_update = false);
 
  protected:
   void SetupMenuHandlers();

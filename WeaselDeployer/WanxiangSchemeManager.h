@@ -24,6 +24,9 @@ class WanxiangSchemeManager {
 
   bool PrepareAndInstall(const WanxiangUpdateManager::SchemeRelease& release,
                          std::wstring* error);
+  bool InstallBundledIfNewer(const std::filesystem::path& bundled_data,
+                             bool* updated,
+                             std::wstring* error);
   bool Commit(std::wstring* error);
   bool Rollback(std::wstring* error);
   bool RecoverInterruptedTransaction(std::wstring* error);

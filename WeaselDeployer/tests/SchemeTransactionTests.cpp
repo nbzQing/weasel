@@ -33,6 +33,7 @@ std::string Read(const fs::path& path) {
 void Populate(const fs::path& user, const fs::path& stage) {
   Write(user / "wanxiang_lite.dict.yaml", "old managed");
   Write(user / "custom_phrase.txt", "user phrase");
+  Write(user / "custom_phrase.dict.yaml", "personal phrase dictionary");
   Write(user / "weasel.custom.yaml", "user custom");
   Write(user / "custom" / "wanxiang_lite.custom.yaml", "user managed custom");
   Write(user / "my_dicts" / "personal.dict.yaml", "user dictionary");
@@ -41,6 +42,9 @@ void Populate(const fs::path& user, const fs::path& stage) {
   Write(stage / "wanxiang_lite.dict.yaml", "new managed");
   Write(stage / "dicts" / "added.lite.dict.yaml", "new file");
   Write(stage / "custom_phrase.txt", "upstream phrase");
+  Write(stage / "custom_phrase.dict.yaml", "upstream phrase dictionary");
+  Write(stage / "opencc" / "wanxiang_emoji.json", "new OpenCC data");
+  Write(stage / "wanxiang_abbrev.schema.yaml", "new abbreviation schema");
   Write(stage / "weasel.custom.yaml", "upstream custom");
   Write(stage / "custom" / "wanxiang_lite.custom.yaml", "managed custom");
   Write(stage / "my_dicts" / "personal.dict.yaml", "upstream dictionary");
@@ -69,14 +73,23 @@ int main(int argc, char** argv) {
               "new managed file was not installed");
       Require(Read(user / "custom_phrase.txt") == "user phrase",
               "custom phrase was overwritten");
+      Require(Read(user / "custom_phrase.dict.yaml") ==
+                  "personal phrase dictionary",
+              "personal phrase dictionary was overwritten");
+      Require(
+          Read(user / "opencc" / "wanxiang_emoji.json") == "new OpenCC data",
+          "required OpenCC data was not installed");
+      Require(Read(user / "wanxiang_abbrev.schema.yaml") ==
+                  "new abbreviation schema",
+              "required abbreviation schema was not installed");
       Require(Read(user / "weasel.custom.yaml") == "user custom",
               "root custom yaml was overwritten");
       Require(Read(user / "custom" / "wanxiang_lite.custom.yaml") ==
                   "managed custom",
               "package custom directory was not updated");
-      Require(
-          Read(user / "wanxiang_english.schema.yaml") == "user non-lite schema",
-          "non-Lite schema was overwritten");
+      Require(Read(user / "wanxiang_english.schema.yaml") ==
+                  "upstream non-lite schema",
+              "Lite dependency schema was not updated");
       Require(
           Read(user / "my_dicts" / "personal.dict.yaml") == "user dictionary",
           "user dictionary was overwritten");
@@ -93,6 +106,39 @@ int main(int argc, char** argv) {
     }
 
     {
+      const auto user = root / "bundled-user";
+      const auto bundle = root / "bundled-data";
+      Populate(user, bundle);
+      Write(user / "version.txt", "18.0.9\n");
+      Write(bundle / "version.txt", "18.0.11\n");
+      Write(bundle / "wanxiang_lite.schema.yaml", "new Lite schema");
+      Write(bundle / "lua" / "wanxiang" / "helper.lua", "new Lua data");
+      Write(user / "opencc" / "hk2t.json", "personal OpenCC data");
+      Write(bundle / "opencc" / "hk2t.json", "unrelated OpenCC data");
+      WanxiangSchemeManager manager(user);
+      bool updated = false;
+      std::wstring error;
+      Require(
+          manager.InstallBundledIfNewer(bundle, &updated, &error) && updated,
+          "newer bundled scheme was not installed");
+      Require(Read(user / "version.txt") == "18.0.11\n",
+              "bundled scheme version was not recorded");
+      Require(Read(user / "wanxiang_lite.dict.yaml") == "new managed",
+              "bundled managed dictionary was not updated");
+      Require(Read(user / "lua" / "wanxiang" / "helper.lua") == "new Lua data",
+              "bundled Lua data was not installed");
+      Require(Read(user / "opencc" / "hk2t.json") == "personal OpenCC data",
+              "unrelated OpenCC data was overwritten");
+      Require(Read(user / "custom_phrase.dict.yaml") ==
+                  "personal phrase dictionary",
+              "bundled update overwrote personal phrases");
+      updated = true;
+      Require(
+          manager.InstallBundledIfNewer(bundle, &updated, &error) && !updated,
+          "equal bundled version was installed again");
+    }
+
+    {
       const auto user = root / "rollback-user";
       const auto stage = root / "rollback-stage";
       Populate(user, stage);
@@ -106,6 +152,9 @@ int main(int argc, char** argv) {
               "rollback did not remove newly installed file");
       Require(Read(user / "custom_phrase.txt") == "user phrase",
               "rollback changed preserved file");
+      Require(Read(user / "custom_phrase.dict.yaml") ==
+                  "personal phrase dictionary",
+              "rollback changed personal phrase dictionary");
       Require(Read(user / "custom" / "wanxiang_lite.custom.yaml") ==
                   "user managed custom",
               "rollback did not restore package custom file");

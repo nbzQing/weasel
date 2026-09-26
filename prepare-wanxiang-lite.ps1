@@ -107,9 +107,11 @@ $forbiddenFiles = @(
   'default.yaml', 'weasel.yaml', 'installation.yaml', 'user.yaml'
 )
 $allowedTemplates = @(
+  'custom/wanxiang_abbrev.custom.yaml',
   'custom/wanxiang_english.custom.yaml',
   'custom/wanxiang_lite.custom.yaml',
   'custom/wanxiang_mixedcode.custom.yaml',
+  'custom/wanxiang_phrase.custom.yaml',
   'custom/wanxiang_reverse.custom.yaml'
 )
 foreach ($relativePath in $manifest.files) {
@@ -219,6 +221,12 @@ try {
   $zip.Dispose()
 }
 
+$bundledVersion = [IO.File]::ReadAllText(
+  (Join-Path $destinationRoot 'version.txt'), [Text.Encoding]::UTF8).Trim()
+if ($bundledVersion -ne $manifest.version) {
+  throw "Wanxiang package version mismatch: $bundledVersion"
+}
+
 $mainSchemaPath = Join-Path $destinationRoot 'wanxiang_lite.schema.yaml'
 $mainSchema = [IO.File]::ReadAllText($mainSchemaPath, [Text.Encoding]::UTF8)
 if ($mainSchema -notmatch '(?m)^\s*schema_id:\s*wanxiang_lite\s*(?:#.*)?$' -or
@@ -231,11 +239,11 @@ $templateContracts = @{
   'custom/wanxiang_lite.custom.yaml' =
     '(?m)^[ \t]*-[ \t]*wanxiang_algebra:/lite/[^\s#]+'
   'custom/wanxiang_mixedcode.custom.yaml' =
-    '(?m)^[ \t]*__patch:[ \t]*wanxiang_algebra:/mixed/[^\s#]+'
+    '(?m)^[ \t]*-[ \t]*wanxiang_algebra:/mixed/[^\s#]+'
   'custom/wanxiang_reverse.custom.yaml' =
-    '(?m)^[ \t]*__include:[ \t]*wanxiang_algebra:/reverse/[^\s#]+'
+    '(?m)^[ \t]*-[ \t]*wanxiang_algebra:/reverse/[^\s#]+'
   'custom/wanxiang_english.custom.yaml' =
-    '(?m)^[ \t]*__patch:[ \t]*wanxiang_algebra:/english/[^\s#]+'
+    '(?m)^[ \t]*-[ \t]*wanxiang_algebra:/english/[^\s#]+'
 }
 foreach ($relativePath in $templateContracts.Keys) {
   $templatePath = Join-Path $destinationRoot $relativePath.Replace('/', '\')
@@ -253,13 +261,21 @@ $modeScript = [IO.File]::ReadAllText($modeScriptPath, [Text.Encoding]::UTF8)
 $modeScript = $modeScript.Replace(
   '    for _, name in ipairs(files) do',
   "    local changed = 0`r`n    for _, name in ipairs(files) do")
-$modeScript = $modeScript.Replace(
-  '            replace_schema(dest, target_schema, profile)',
-  "            if replace_schema(dest, target_schema, profile) then`r`n                changed = changed + 1`r`n            end")
-$successAnchor = '    local msg = main_exists'
+$replacementCount = ([regex]::Matches($modeScript,
+  '(?m)^([ \t]*)replace_schema\(dest, target_schema\)\s*$')).Count
+if ($replacementCount -ne 3) {
+  throw 'Wanxiang mode switcher no longer has the expected file update branches.'
+}
+$modeScript = [regex]::Replace($modeScript,
+  '(?m)^([ \t]*)replace_schema\(dest, target_schema\)\s*$',
+  { param($match)
+    $indent = $match.Groups[1].Value
+    "${indent}if replace_schema(dest, target_schema) then`n${indent}    changed = changed + 1`n${indent}end"
+  })
+$successAnchor = '    local msg'
 if ($modeScript -notmatch 'local changed = 0' -or
-    ([regex]::Matches($modeScript, 'changed = changed \+ 1')).Count -ne 2 -or
-    -not $modeScript.Contains($successAnchor)) {
+    ([regex]::Matches($modeScript, 'changed = changed \+ 1')).Count -ne 3 -or
+    ([regex]::Matches($modeScript, '(?m)^    local msg[ \t]*$')).Count -ne 1) {
   throw 'Wanxiang mode switcher no longer matches the verified repair contract.'
 }
 $failureCheck = @'
@@ -272,7 +288,8 @@ $failureCheck = @'
     end
 
 '@
-$modeScript = $modeScript.Replace($successAnchor, $failureCheck + $successAnchor)
+$modeScript = [regex]::Replace($modeScript, '(?m)^    local msg[ \t]*$',
+  { param($match) $failureCheck + $successAnchor })
 [IO.File]::WriteAllText($modeScriptPath, $modeScript,
                         [Text.UTF8Encoding]::new($false))
 

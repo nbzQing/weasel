@@ -2,15 +2,45 @@ name: Update Appcast
 on:
   release:
     types: [published, prereleased]
+  workflow_dispatch:
 jobs:
-
-  update_appcast:
-
+  upstream_appcast:
+    if: ${{ github.repository == 'rime/weasel' && github.event_name == 'release' }}
     runs-on: windows-2019
-
     steps:
       - name: Update Appcast
-        if: ${{ github.repository == 'rime/weasel' }}
         run: gh workflow run gh-pages.yml -R rime/home --ref master
         env:
           GH_TOKEN: ${{ secrets.ACTIONS_DEPLOY_KEY }}
+
+  fork_appcast:
+    if: ${{ github.repository == 'nbzQing/weasel' }}
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Attach updater feed to the latest published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = if ($env:RELEASE_TAG) {
+            gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,assets | ConvertFrom-Json
+          } else {
+            gh release view --repo $env:GITHUB_REPOSITORY --json tagName,assets | ConvertFrom-Json
+          }
+          if ($LASTEXITCODE -ne 0 -or -not $release) { throw 'Unable to read the published release.' }
+          $installer = $release.assets | Where-Object {
+            $_.name -match '^weasel-official-0\.17\.4-custom-0\.17\.4\.[0-9]+(?:\.[0-9a-f]{7,40})?-installer\.exe$'
+          } | Select-Object -First 1
+          if (-not $installer) { throw 'The release has no compatible installer.' }
+          .\tools\New-Appcast.ps1 -Version $release.tagName -InstallerName $installer.name -InstallerSize $installer.size
+          gh release upload $release.tagName .\output\archives\appcast.xml --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to attach the updater feed.' }
+          $verified = gh release view $release.tagName --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not ($verified.assets | Where-Object name -eq 'appcast.xml')) {
+            throw 'The release is missing the updater feed.'
+          }

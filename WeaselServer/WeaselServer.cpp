@@ -84,6 +84,14 @@ int WINAPI _tWinMain(HINSTANCE hInstance,
     return 0;
   }
 
+  if (!wcscmp(L"/update", lpstrCmdLine)) {
+    weasel::Client client;
+    if (client.Connect()) {
+      client.TrayCommand(ID_WEASELTRAY_CHECKUPDATE);
+      return 0;
+    }
+  }
+
   // command line option /q stops the running server
   bool quit = !wcscmp(L"/q", lpstrCmdLine) || !wcscmp(L"/quit", lpstrCmdLine);
   // restart if already running
@@ -106,18 +114,13 @@ int WINAPI _tWinMain(HINSTANCE hInstance,
       return 0;
   }
 
-  bool check_updates = !wcscmp(L"/update", lpstrCmdLine);
-  if (check_updates) {
-    WeaselServerApp::check_update();
-  }
-
   CreateDirectory(WeaselUserDataPath().c_str(), NULL);
 
   int nRet = 0;
   try {
     WeaselServerApp app;
     RegisterApplicationRestart(NULL, 0);
-    nRet = app.Run();
+    nRet = app.Run(!wcscmp(L"/update", lpstrCmdLine));
   } catch (...) {
     // bad luck...
     nRet = -1;

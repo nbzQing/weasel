@@ -8,6 +8,7 @@
 #include "StatusIconSettingsDialog.h"
 #include "UIStyleSettings.h"
 #include "UIStyleSettingsDialog.h"
+#include "WanxiangSchemeManager.h"
 #include "SettingsPerformance.h"
 #include "SettingsAppearancePopup.h"
 #include "DictManagementDialog.h"
@@ -959,6 +960,23 @@ int Configurator::UpdateWorkspace(bool report_errors) {
                  MB_OK | MB_ICONINFORMATION);
     }
     return 1;
+  }
+
+  if (!preview) {
+    WanxiangSchemeManager bundled_scheme;
+    bool updated = false;
+    std::wstring error;
+    if (!bundled_scheme.InstallBundledIfNewer(WeaselSharedDataPath(), &updated,
+                                              &error)) {
+      LOG(ERROR) << "Unable to install bundled Wanxiang Lite: " << wtou8(error);
+      CloseHandle(hMutex);
+      if (report_errors)
+        ::MessageBoxW(nullptr, error.c_str(), L"万象 Lite 更新失败",
+                      MB_OK | MB_ICONERROR);
+      return 1;
+    }
+    if (updated)
+      LOG(INFO) << "Installed newer bundled Wanxiang Lite before deployment.";
   }
 
   std::unique_ptr<weasel::Client> client;

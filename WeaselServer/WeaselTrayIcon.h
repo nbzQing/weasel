@@ -1,0 +1,118 @@
+#pragma once
+#include <WeaselUI.h>
+#include <WeaselIPC.h>
+#include "SystemTraySDK.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <map>
+#include <set>
+
+#define WM_WEASEL_TRAY_NOTIFY (WEASEL_IPC_LAST_COMMAND + 100)
+
+// Snapshot of the tray-relevant UI state, computed on the pipe worker thread
+// and applied on the server message thread. Keeps Shell_NotifyIcon off the
+// pipe worker threads (and away from g_api_mutex), avoiding the deadlock loop
+// where the taskbar UI thread waits on the pipe while the server waits for the
+// taskbar UI thread inside Shell_NotifyIcon.
+struct WeaselTrayIconState {
+  WeaselTrayIconState()
+      : valid(false),
+        display_tray_icon(false),
+        disabled(false),
+        ascii_mode(false),
+        caps_lock(false) {}
+
+  static WeaselTrayIconState From(const weasel::UIStyle& style,
+                                  const weasel::Status& status) {
+    WeaselTrayIconState state;
+    state.valid = true;
+    state.display_tray_icon = style.display_tray_icon;
+    state.disabled = status.disabled;
+    state.ascii_mode = status.ascii_mode;
+    state.schema_id = status.schema_id;
+    return state;
+  }
+
+  bool operator==(const WeaselTrayIconState& rhs) const {
+    return valid == rhs.valid && display_tray_icon == rhs.display_tray_icon &&
+           disabled == rhs.disabled && ascii_mode == rhs.ascii_mode &&
+           caps_lock == rhs.caps_lock && schema_id == rhs.schema_id;
+  }
+
+  bool operator!=(const WeaselTrayIconState& rhs) const {
+    return !(*this == rhs);
+  }
+
+  bool valid;
+  bool display_tray_icon;
+  bool disabled;
+  bool ascii_mode;
+  bool caps_lock;
+  std::wstring schema_id;
+};
+
+class WeaselTrayIcon : public CSystemTray {
+ public:
+  enum WeaselTrayMode {
+    INITIAL,
+    ZHUNG,
+    ASCII,
+    ZHUNG_CAPS,
+    ASCII_CAPS,
+    DISABLED,
+  };
+
+  WeaselTrayIcon(weasel::UI& ui);
+  ~WeaselTrayIcon();
+
+  BOOL Create(HWND hTargetWnd);
+
+  // Captures the tray-relevant state and posts a refresh request to the server
+  // message thread. Never calls Shell_NotifyIcon itself.
+  void RequestRefresh();
+  void DisableRefresh();
+
+  // Runs on the server message thread (no g_api_mutex held).
+  void ApplyRefresh();
+  void ReloadSettings();
+  void SetCapsLockState(bool enabled);
+  void SetQuickSwitchCallbacks(
+      std::function<weasel::QuickSwitchSnapshot()> snapshot,
+      std::function<bool(const weasel::QuickSwitchSnapshot&, int, int)> select);
+  bool HandleQuickSwitchCommand(UINT id);
+
+ protected:
+  virtual void CustomizeMenu(HMENU hMenu);
+
+  void Refresh(const WeaselTrayIconState& state, bool force = false);
+
+  weasel::UIStyle& m_style;
+  weasel::Status& m_status;
+  WeaselTrayMode m_mode;
+  std::wstring m_schema_id;
+  bool m_disabled;
+  std::atomic<bool> m_caps_lock;
+  WeaselTrayIconState m_last_state;
+  ULONG_PTR m_graphics_token = 0;
+
+  // Guarded by m_state_mutex.
+  bool m_refresh_enabled = true;
+  bool m_refresh_pending = false;
+  bool m_refresh_in_progress = false;
+  WeaselTrayIconState m_pending_state;
+  std::mutex m_state_mutex;
+  std::condition_variable m_state_cv;
+  struct QuickAction {
+    int schema_index = -1;
+    int state = -1;  // -1 toggles a favorite, -2 changes its pin.
+  };
+  std::map<UINT, QuickAction> m_quick_actions;
+  weasel::QuickSwitchSnapshot m_quick_snapshot;
+  std::function<weasel::QuickSwitchSnapshot()> m_switch_snapshot;
+  std::function<bool(const weasel::QuickSwitchSnapshot&, int, int)>
+      m_switch_select;
+  std::set<int> LoadQuickFavorites() const;
+  void SaveQuickFavorites(const std::set<int>& favorites) const;
+};

@@ -1,0 +1,343 @@
+#pragma once
+
+#include "Globals.h"
+#include <WeaselIPC.h>
+#include <WeaselIPCData.h>
+
+class CCandidateList;
+class CLangBarItemButton;
+class CCompartmentEventSink;
+
+class WeaselTSF : public ITfTextInputProcessorEx,
+                  public ITfThreadMgrEventSink,
+                  public ITfTextEditSink,
+                  public ITfTextLayoutSink,
+                  public ITfKeyEventSink,
+                  public ITfCompositionSink,
+                  public ITfThreadFocusSink,
+                  public ITfActiveLanguageProfileNotifySink,
+                  public ITfEditSession,
+                  public ITfDisplayAttributeProvider {
+ public:
+  WeaselTSF();
+  ~WeaselTSF();
+
+  // The UI may inspect, but never reconnect or send through, the active pipe.
+  bool QueryAcrylicServer(DWORD& processId,
+                          DWORD& sessionId,
+                          DWORD& stage,
+                          DWORD& error) const {
+    return m_client.QueryConnectedServer(processId, sessionId, stage, error);
+  }
+
+  /* IUnknown */
+  STDMETHODIMP QueryInterface(REFIID riid, void** ppvObject);
+  STDMETHODIMP_(ULONG) AddRef();
+  STDMETHODIMP_(ULONG) Release();
+
+  /* ITfTextInputProcessor */
+  STDMETHODIMP Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClientId);
+  STDMETHODIMP Deactivate();
+
+  /* ITfTextInputProcessorEx */
+  STDMETHODIMP ActivateEx(ITfThreadMgr* pThreadMgr,
+                          TfClientId tfClientId,
+                          DWORD dwFlags);
+
+  /* ITfThreadMgrEventSink */
+  STDMETHODIMP OnInitDocumentMgr(ITfDocumentMgr* pDocMgr);
+  STDMETHODIMP OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr);
+  STDMETHODIMP OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
+                          ITfDocumentMgr* pDocMgrPrevFocus);
+  STDMETHODIMP OnPushContext(ITfContext* pContext);
+  STDMETHODIMP OnPopContext(ITfContext* pContext);
+
+  /* ITfTextEditSink */
+  STDMETHODIMP OnEndEdit(ITfContext* pic,
+                         TfEditCookie ecReadOnly,
+                         ITfEditRecord* pEditRecord);
+
+  /* ITfTextLayoutSink */
+  STDMETHODIMP OnLayoutChange(ITfContext* pContext,
+                              TfLayoutCode lcode,
+                              ITfContextView* pContextView);
+
+  /* ITfKeyEventSink */
+  STDMETHODIMP OnSetFocus(BOOL fForeground);
+  STDMETHODIMP OnTestKeyDown(ITfContext* pContext,
+                             WPARAM wParam,
+                             LPARAM lParam,
+                             BOOL* pfEaten);
+  STDMETHODIMP OnKeyDown(ITfContext* pContext,
+                         WPARAM wParam,
+                         LPARAM lParam,
+                         BOOL* pfEaten);
+  STDMETHODIMP OnTestKeyUp(ITfContext* pContext,
+                           WPARAM wParam,
+                           LPARAM lParam,
+                           BOOL* pfEaten);
+  STDMETHODIMP OnKeyUp(ITfContext* pContext,
+                       WPARAM wParam,
+                       LPARAM lParam,
+                       BOOL* pfEaten);
+  STDMETHODIMP OnPreservedKey(ITfContext* pContext,
+                              REFGUID rguid,
+                              BOOL* pfEaten);
+
+  // ITfThreadFocusSink
+  STDMETHODIMP OnSetThreadFocus();
+  STDMETHODIMP OnKillThreadFocus();
+
+  /* ITfCompositionSink */
+  STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite,
+                                       ITfComposition* pComposition);
+
+  /* ITfEditSession */
+  STDMETHODIMP DoEditSession(TfEditCookie ec);
+
+  /* ITfActiveLanguageProfileNotifySink */
+  STDMETHODIMP OnActivated(REFCLSID clsid,
+                           REFGUID guidProfile,
+                           BOOL isActivated);
+
+  // ITfDisplayAttributeProvider
+  STDMETHODIMP EnumDisplayAttributeInfo(
+      __RPC__deref_out_opt IEnumTfDisplayAttributeInfo** ppEnum);
+  STDMETHODIMP GetDisplayAttributeInfo(
+      __RPC__in REFGUID guidInfo,
+      __RPC__deref_out_opt ITfDisplayAttributeInfo** ppInfo);
+
+  ///* ITfCompartmentEventSink */
+  // STDMETHODIMP OnChange(_In_ REFGUID guid);
+
+  /* Compartments */
+  BOOL _IsKeyboardDisabled();
+  BOOL _IsKeyboardOpen();
+  HRESULT _SetKeyboardOpen(BOOL fOpen);
+  HRESULT _GetCompartmentDWORD(DWORD& value, const GUID guid);
+  HRESULT _SetCompartmentDWORD(const DWORD& value, const GUID guid);
+
+  /* Composition */
+  void _StartComposition(com_ptr<ITfContext> pContext,
+                         BOOL fCUASWorkaroundEnabled);
+  void _EndComposition(com_ptr<ITfContext> pContext,
+                       BOOL clear,
+                       BOOL endUI = TRUE);
+  BOOL _ShowInlinePreedit(com_ptr<ITfContext> pContext,
+                          const std::shared_ptr<weasel::Context> context);
+  void _UpdateComposition(com_ptr<ITfContext> pContext);
+  BOOL _IsComposing();
+  BOOL _IsCurrentComposition(ITfComposition* pComposition);
+  void _SetComposition(com_ptr<ITfComposition> pComposition);
+  void _SetCompositionPosition(const RECT& rc);
+  BOOL _UpdateCompositionWindow(com_ptr<ITfContext> pContext);
+  void _FinalizeComposition();
+  void _AbortComposition(bool clear = true);
+
+  /* R19 diagnostic-only placement probe. Never updates candidate position. */
+  void _R19ResetPlacementProbeDiagnostics();
+  void _R19PlacementProbeTick(com_ptr<ITfContext> pContext);
+  void _R19CompletePlacementProbe(DWORD generation,
+                                  HRESULT textExtHr,
+                                  const RECT* rect,
+                                  BOOL clipped);
+  void _R20CompleteRangeSourceProbe(DWORD generation,
+                                    HRESULT selectionHr,
+                                    const RECT* selectionRect,
+                                    BOOL selectionClipped,
+                                    HRESULT compositionStartHr,
+                                    const RECT* compositionStartRect,
+                                    BOOL compositionStartClipped,
+                                    HRESULT compositionEndHr,
+                                    const RECT* compositionEndRect,
+                                    BOOL compositionEndClipped);
+  void _R21PlacementFollowTick(com_ptr<ITfContext> pContext);
+  void _R21ResetPlacementFollow();
+  void _R19PublishPlacementProbeDiagnostics(HWND hwnd) const;
+
+  /* Language bar */
+  HWND _GetFocusedContextWindow();
+  void _HandleLangBarMenuSelect(UINT wID);
+
+  /* IPC */
+  bool _EnsureServerConnected();
+
+  /* UI */
+  void _UpdateUI(const weasel::Context& ctx, const weasel::Status& status);
+  void _StartUI();
+  void _EndUI();
+  void _ShowUI();
+  void _HideUI();
+  com_ptr<ITfContext> _GetUIContextDocument();
+
+  /* Display Attribute */
+  void _ClearCompositionDisplayAttributes(TfEditCookie ec,
+                                          _In_ ITfContext* pContext,
+                                          _In_ ITfRange* pRangeComposition);
+  BOOL _SetCompositionDisplayAttributes(TfEditCookie ec,
+                                        _In_ ITfContext* pContext,
+                                        ITfRange* pRangeComposition);
+  BOOL _InitDisplayAttributeGuidAtom();
+
+  com_ptr<ITfThreadMgr> _GetThreadMgr() { return _pThreadMgr; }
+  void HandleUICallback(size_t* const sel,
+                        size_t* const hov,
+                        bool* const next,
+                        bool* const scroll_next);
+
+ private:
+  /* ui callback functions private */
+  void _SelectCandidateOnCurrentPage(const size_t index);
+  void _HandleMouseHoverEvent(const size_t index);
+  void _HandleMousePageEvent(bool* const nextPage, bool* const scrollNextPage);
+  /* TSF Related */
+  BOOL _InitThreadMgrEventSink();
+  void _UninitThreadMgrEventSink();
+  // ITfThreadFocusSink
+  BOOL _InitThreadFocusSink();
+  void _UninitThreadFocusSink();
+  DWORD _dwThreadFocusSinkCookie;
+
+  BOOL _InitTextEditSink(com_ptr<ITfDocumentMgr> pDocMgr);
+
+  BOOL _InitKeyEventSink();
+  void _UninitKeyEventSink();
+  void _ProcessKeyEvent(WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
+
+  BOOL _InitPreservedKey();
+  void _UninitPreservedKey();
+
+  BOOL _InitLanguageBar();
+  void _UninitLanguageBar();
+  void _UpdateLanguageBar(weasel::Status stat);
+  void _UpdateCapsLockState(bool enabled);
+  void _ShowLanguageBar(BOOL show);
+  void _EnableLanguageBar(BOOL enable);
+
+  BOOL _InsertText(com_ptr<ITfContext> pContext, const std::wstring& ext);
+
+  void _DeleteCandidateList();
+
+  BOOL _InitCompartment();
+  void _UninitCompartment();
+  HRESULT _HandleCompartment(REFGUID guidCompartment);
+
+  void _Reconnect();
+  std::wstring _GetRootDir();
+
+  bool isImmersive() const {
+    return (_activateFlags & TF_TMF_IMMERSIVEMODE) != 0;
+  }
+
+  com_ptr<ITfThreadMgr> _pThreadMgr;
+  TfClientId _tfClientId;
+  DWORD _dwThreadMgrEventSinkCookie;
+
+  com_ptr<ITfContext> _pTextEditSinkContext;
+  DWORD _dwTextEditSinkCookie, _dwTextLayoutSinkCookie;
+  BYTE _lpbKeyState[256];
+  BOOL _fTestKeyDownPending, _fTestKeyUpPending;
+
+  com_ptr<ITfContext> _pEditSessionContext;
+  std::wstring _editSessionText;
+
+  com_ptr<CCompartmentEventSink> _pKeyboardCompartmentSink;
+  com_ptr<CCompartmentEventSink> _pConvertionCompartmentSink;
+
+  com_ptr<ITfComposition> _pComposition;
+
+  com_ptr<CLangBarItemButton> _pLangBarButton;
+
+  com_ptr<CCandidateList> _cand;
+
+  LONG _cRef;  // COM ref count
+
+  /* CUAS Candidate Window Position Workaround */
+  BOOL _fCUASWorkaroundTested, _fCUASWorkaroundEnabled;
+
+  /* R19 diagnostic-only placement probe state. */
+  bool _r19ProbePending = false;
+  DWORD _r19ProbeGeneration = 0;
+  DWORD _r19ProbeRequests = 0;
+  DWORD _r19ProbeSubmitted = 0;
+  DWORD _r19ProbeCoalesced = 0;
+  DWORD _r19ProbeCompleted = 0;
+  DWORD _r19ProbeFailures = 0;
+  DWORD _r19ProbeRectChanges = 0;
+  DWORD _r19LayoutCallbacks = 0;
+  DWORD _r19LayoutChanges = 0;
+  DWORD _r19NormalPositionRequests = 0;
+  HRESULT _r19ProbeLastSubmitHr = S_OK;
+  HRESULT _r19ProbeLastSessionHr = S_OK;
+  HRESULT _r19ProbeLastTextExtHr = S_OK;
+  bool _r19ProbeHasRect = false;
+  RECT _r19ProbeLastRect = {};
+  BOOL _r19ProbeLastClipped = FALSE;
+  HWND _r19ProbeViewHwnd = nullptr;
+
+  /* R20 diagnostic-only range-source comparison. */
+  DWORD _r20SamplesCompleted = 0;
+  DWORD _r20SelectionFailures = 0;
+  DWORD _r20CompositionStartFailures = 0;
+  DWORD _r20CompositionEndFailures = 0;
+  DWORD _r20SelectionRectChanges = 0;
+  DWORD _r20CompositionStartRectChanges = 0;
+  DWORD _r20CompositionEndRectChanges = 0;
+  HRESULT _r20SelectionLastTextExtHr = S_OK;
+  HRESULT _r20CompositionStartLastTextExtHr = S_OK;
+  HRESULT _r20CompositionEndLastTextExtHr = S_OK;
+  bool _r20SelectionHasRect = false;
+  bool _r20CompositionStartHasRect = false;
+  bool _r20CompositionEndHasRect = false;
+  RECT _r20SelectionLastRect = {};
+  RECT _r20CompositionStartLastRect = {};
+  RECT _r20CompositionEndLastRect = {};
+  BOOL _r20SelectionLastClipped = FALSE;
+  BOOL _r20CompositionStartLastClipped = FALSE;
+  BOOL _r20CompositionEndLastClipped = FALSE;
+
+  /* R21 generic TSF + MSAA placement follow state. */
+  DWORD _r21LastR20Sample = 0;
+  bool _r21HaveAuthoritativeStart = false;
+  RECT _r21AuthoritativeStart = {};
+  bool _r21HaveTsfPair = false;
+  RECT _r21PairStart = {};
+  RECT _r21PairEnd = {};
+  bool _r21HaveMsaaBaseline = false;
+  RECT _r21BaselineMsaa = {};
+  HWND _r21BaselineFocus = nullptr;
+  HWND _r21BaselineRoot = nullptr;
+  LONG _r21BaselineCorrectionX = 0;
+  LONG _r21BaselineCorrectionY = 0;
+  LONG _r21CorrectionX = 0;
+  LONG _r21CorrectionY = 0;
+  bool _r21CorrectionActive = false;
+  bool _r21MotionProvisional = false;
+  DWORD _r21MotionProvisionalTick = 0;
+  bool _r21MotionActive = false;
+  DWORD _r21LastTextActivityTick = 0;
+  bool _r21HaveNormalPosition = false;
+  RECT _r21LastNormalPosition = {};
+  bool _r21HaveOutputPosition = false;
+  RECT _r21LastOutputPosition = {};
+  DWORD _r21AuthoritativeRequeries = 0;
+  DWORD _r21Rebases = 0;
+  DWORD _r21MotionGates = 0;
+  DWORD _r21MotionActivations = 0;
+  DWORD _r21CorrectionUpdates = 0;
+  DWORD _r21MsaaUnavailable = 0;
+  DWORD _r21GuardResets = 0;
+
+  /* Weasel Related */
+  weasel::Client m_client;
+  DWORD _activateFlags;
+
+  /* IME status */
+  weasel::Status _status;
+
+  // guidatom for the display attibute.
+  TfGuidAtom _gaDisplayAttributeInput;
+  BOOL _async_edit = false;
+  BOOL _committed = false;
+  BOOL _isToOpenClose = false;
+};

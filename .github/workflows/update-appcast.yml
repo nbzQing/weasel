@@ -1,5 +1,10 @@
 name: Update Appcast
 on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/update-appcast.yml
+      - tools/New-Appcast.ps1
   release:
     types: [published, prereleased]
   workflow_dispatch:

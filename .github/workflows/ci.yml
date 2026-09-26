@@ -343,3 +343,62 @@ jobs:
             ./output/archives/weasel*.exe
             ./output/archives/debug_symbols.7z
           body_path: ${{ github.workspace }}/RELEASE_CHANGELOG.md
+
+  release_fork:
+    if: ${{ github.repository == 'nbzQing/weasel' && startsWith(github.ref, 'refs/tags/') }}
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified xmake installer
+        uses: actions/download-artifact@v4
+        with:
+          pattern: weasel-xmake-acrylic-*
+          path: output/archives
+          merge-multiple: true
+
+      - name: Prepare installer, checksum, and updater feed
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $commitCount = [int](& git rev-list HEAD --count)
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to count release commits.' }
+          $expectedVersion = "0.17.4.$(193 + $commitCount)"
+          if ($env:RELEASE_TAG -ne $expectedVersion) {
+            throw "Release tag $env:RELEASE_TAG does not match build version $expectedVersion."
+          }
+          $installers = @(Get-ChildItem -LiteralPath output/archives -Filter 'weasel*.exe' -File)
+          if ($installers.Count -ne 1 -or $installers[0].Length -le 0) {
+            throw 'Expected exactly one nonempty xmake installer artifact.'
+          }
+          $shortSha = (& git rev-parse --short HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read release commit.' }
+          $installerName = "weasel-official-0.17.4-custom-$env:RELEASE_TAG.$shortSha-installer.exe"
+          $installerPath = Join-Path output/archives $installerName
+          Move-Item -LiteralPath $installers[0].FullName -Destination $installerPath
+          $installer = Get-Item -LiteralPath $installerPath
+          $checksum = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD 'output/archives/SHA256SUMS.txt'),
+            "$checksum  $installerName`n", [Text.UTF8Encoding]::new($false))
+          ./tools/New-Appcast.ps1 -Version $env:RELEASE_TAG -InstallerName $installerName -InstallerSize $installer.Length
+          Write-Host "Release installer: $installerName ($($installer.Length) bytes)"
+
+      - name: Publish fork release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          name: 小狼毫图形化改版 ${{ github.ref_name }}（基于官方 0.17.4）
+          body_path: .github/RELEASE_NOTES_CN.md
+          files: |
+            output/archives/weasel-official-0.17.4-custom-*-installer.exe
+            output/archives/SHA256SUMS.txt
+            output/archives/appcast.xml

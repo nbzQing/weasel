@@ -158,6 +158,10 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   /* Language bar */
   HWND _GetFocusedContextWindow();
   void _HandleLangBarMenuSelect(UINT wID);
+  weasel::QuickSwitchSnapshot _GetQuickSwitches();
+  bool _SelectQuickSwitch(const weasel::QuickSwitchSnapshot& snapshot,
+                          int schema_index,
+                          int state);
 
   /* IPC */
   bool _EnsureServerConnected();

@@ -62,7 +62,7 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual void SetOption(WeaselSessionId ipc_id,
                          const std::string& opt,
                          bool val);
-  weasel::QuickSwitchSnapshot GetQuickSwitches() override;
+  weasel::QuickSwitchSnapshot GetQuickSwitches(DWORD session_id = 0) override;
   bool SelectQuickSwitch(const weasel::QuickSwitchSnapshot& snapshot,
                          int schema_index,
                          int state) override;

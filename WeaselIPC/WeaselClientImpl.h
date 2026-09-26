@@ -34,6 +34,10 @@ class ClientImpl {
   void FocusIn();
   void FocusOut();
   void TrayCommand(UINT menuId);
+  QuickSwitchSnapshot GetQuickSwitches();
+  bool SelectQuickSwitch(const QuickSwitchSnapshot& snapshot,
+                         int schema_index,
+                         int state);
   bool GetResponseData(ResponseHandler const& handler);
 
  protected:

@@ -1,6 +1,7 @@
 ﻿#include "stdafx.h"
 #include "WeaselClientImpl.h"
 #include <StringAlgorithm.hpp>
+#include <WeaselQuickSwitchWire.h>
 
 using namespace weasel;
 
@@ -145,6 +146,35 @@ void ClientImpl::FocusOut() {
 
 void ClientImpl::TrayCommand(UINT menuId) {
   _SendMessage(WEASEL_IPC_TRAY_COMMAND, menuId, session_id);
+}
+
+QuickSwitchSnapshot ClientImpl::GetQuickSwitches() {
+  QuickSwitchSnapshot snapshot;
+  if (!_Active() || !_SendMessage(WEASEL_IPC_GET_QUICK_SWITCHES, 0, session_id))
+    return snapshot;
+  GetResponseData([&](LPWSTR buffer, DWORD length) {
+    size_t size = 0;
+    while (size < length && buffer[size])
+      ++size;
+    return size < length &&
+           ParseQuickSwitchSnapshot(std::wstring_view(buffer, size),
+                                    snapshot) &&
+           snapshot.session_id == session_id;
+  });
+  return snapshot;
+}
+
+bool ClientImpl::SelectQuickSwitch(const QuickSwitchSnapshot& snapshot,
+                                   int schema_index,
+                                   int state) {
+  if (!_Active() || snapshot.session_id != session_id || schema_index < 0 ||
+      schema_index > 0xffff || state < 0 || state > 0xffff)
+    return false;
+  const auto schema_id = u8tow(snapshot.schema_id);
+  channel << schema_id.c_str();
+  const DWORD action =
+      (static_cast<DWORD>(schema_index) << 16) | static_cast<DWORD>(state);
+  return _SendMessage(WEASEL_IPC_SELECT_QUICK_SWITCH, action, session_id) != 0;
 }
 
 void ClientImpl::StartSession() {
@@ -296,6 +326,16 @@ void Client::EndMaintenance() {
 
 void Client::TrayCommand(UINT menuId) {
   m_pImpl->TrayCommand(menuId);
+}
+
+QuickSwitchSnapshot Client::GetQuickSwitches() {
+  return m_pImpl->GetQuickSwitches();
+}
+
+bool Client::SelectQuickSwitch(const QuickSwitchSnapshot& snapshot,
+                               int schema_index,
+                               int state) {
+  return m_pImpl->SelectQuickSwitch(snapshot, schema_index, state);
 }
 
 bool Client::Echo() {

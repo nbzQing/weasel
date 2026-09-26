@@ -35,6 +35,8 @@ enum WEASEL_IPC_COMMAND {
   WEASEL_IPC_HIGHLIGHT_CANDIDATE_ON_CURRENT_PAGE,
   WEASEL_IPC_CHANGE_PAGE,
   WEASEL_IPC_UPDATE_CAPS_LOCK,
+  WEASEL_IPC_GET_QUICK_SWITCHES,
+  WEASEL_IPC_SELECT_QUICK_SWITCH,
   WEASEL_IPC_LAST_COMMAND
 };
 
@@ -101,7 +103,9 @@ struct RequestHandler {
   virtual void StartMaintenance() {}
   virtual void EndMaintenance() {}
   virtual void SetOption(DWORD session_id, const std::string& opt, bool val) {}
-  virtual QuickSwitchSnapshot GetQuickSwitches() { return {}; }
+  virtual QuickSwitchSnapshot GetQuickSwitches(DWORD session_id = 0) {
+    return {};
+  }
   virtual bool SelectQuickSwitch(const QuickSwitchSnapshot& snapshot,
                                  int schema_index,
                                  int state) {
@@ -175,6 +179,10 @@ class Client {
   void FocusOut();
   // 托盤菜單
   void TrayCommand(UINT menuId);
+  QuickSwitchSnapshot GetQuickSwitches();
+  bool SelectQuickSwitch(const QuickSwitchSnapshot& snapshot,
+                         int schema_index,
+                         int state);
   // 读取server返回的数据
   bool GetResponseData(ResponseHandler handler);
 

@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <gdiplus.h>
 #include <string>
-#include <set>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -131,78 +130,9 @@ void WeaselTrayIcon::CustomizeMenu(HMENU hMenu) {
   if (update_count)
     SetMenuCommandText(hMenu, ID_WEASELTRAY_SETTINGS,
                        SettingsMenuText(update_count));
-  m_quick_actions.clear();
-  m_quick_snapshot =
-      m_switch_snapshot ? m_switch_snapshot() : weasel::QuickSwitchSnapshot{};
-  HMENU quick = ::CreatePopupMenu();
-  if (!quick)
-    return;
-  const bool available =
-      m_quick_snapshot.session_id && !m_quick_snapshot.groups.empty();
-  const bool english = PRIMARYLANGID(GetThreadUILanguage()) != LANG_CHINESE;
-  if (!available) {
-    ::AppendMenuW(quick, MF_STRING | MF_GRAYED, 0,
-                  english ? L"No active input session" : L"没有可用的输入会话");
-  } else {
-    const auto favorites = LoadQuickFavorites();
-    UINT next_id = 41000;
-    bool added_favorite = false;
-    for (const auto& group : m_quick_snapshot.groups) {
-      if (!favorites.count(group.schema_index))
-        continue;
-      if (group.states.size() == 2) {
-        const int next = group.selected ? 0 : 1;
-        const auto label = group.label + L" · " + group.states[group.selected] +
-                           L"  →  " + group.states[next];
-        ::AppendMenuW(quick, MF_STRING, next_id, label.c_str());
-        m_quick_actions[next_id++] = {group.schema_index, next};
-      } else {
-        HMENU states = ::CreatePopupMenu();
-        for (size_t i = 0; i < group.states.size(); ++i) {
-          ::AppendMenuW(
-              states,
-              MF_STRING |
-                  (static_cast<int>(i) == group.selected ? MF_CHECKED : 0),
-              next_id, group.states[i].c_str());
-          m_quick_actions[next_id++] = {group.schema_index,
-                                        static_cast<int>(i)};
-        }
-        ::AppendMenuW(quick, MF_POPUP, reinterpret_cast<UINT_PTR>(states),
-                      group.label.c_str());
-      }
-      added_favorite = true;
-    }
-    if (added_favorite)
-      ::AppendMenuW(quick, MF_SEPARATOR, 0, nullptr);
-    HMENU all = ::CreatePopupMenu();
-    for (const auto& group : m_quick_snapshot.groups) {
-      HMENU states = ::CreatePopupMenu();
-      for (size_t i = 0; i < group.states.size(); ++i) {
-        ::AppendMenuW(
-            states,
-            MF_STRING |
-                (static_cast<int>(i) == group.selected ? MF_CHECKED : 0),
-            next_id, group.states[i].c_str());
-        m_quick_actions[next_id++] = {group.schema_index, static_cast<int>(i)};
-      }
-      ::AppendMenuW(states, MF_SEPARATOR, 0, nullptr);
-      ::AppendMenuW(states, MF_STRING, next_id,
-                    favorites.count(group.schema_index)
-                        ? (english ? L"Remove from favorites" : L"取消常用")
-                        : (english ? L"Add to favorites" : L"设为常用"));
-      m_quick_actions[next_id++] = {group.schema_index, -2};
-      const auto label = group.label + L" · " + group.states[group.selected];
-      ::AppendMenuW(all, MF_POPUP, reinterpret_cast<UINT_PTR>(states),
-                    label.c_str());
-    }
-    ::AppendMenuW(quick, MF_POPUP, reinterpret_cast<UINT_PTR>(all),
-                  english ? L"All switches" : L"全部开关");
-  }
-  ::InsertMenuW(hMenu, 0,
-                MF_BYPOSITION | MF_POPUP | (available ? 0 : MF_GRAYED),
-                reinterpret_cast<UINT_PTR>(quick),
-                english ? L"Current schema switches" : L"当前方案快捷开关");
-  ::InsertMenuW(hMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
+  m_quick_menu.Populate(hMenu, m_switch_snapshot
+                                   ? m_switch_snapshot()
+                                   : weasel::QuickSwitchSnapshot{});
 }
 
 void WeaselTrayIcon::SetQuickSwitchCallbacks(
@@ -212,60 +142,8 @@ void WeaselTrayIcon::SetQuickSwitchCallbacks(
   m_switch_select = std::move(select);
 }
 
-std::set<int> WeaselTrayIcon::LoadQuickFavorites() const {
-  std::set<int> favorites;
-  const auto value_name = L"Favorites:" + u8tow(m_quick_snapshot.schema_id);
-  wchar_t buffer[512] = {};
-  DWORD bytes = sizeof(buffer);
-  constexpr wchar_t key[] = L"Software\\Rime\\Weasel\\QuickSwitches";
-  if (::RegGetValueW(HKEY_CURRENT_USER, key, value_name.c_str(), RRF_RT_REG_SZ,
-                     nullptr, buffer, &bytes) != ERROR_SUCCESS) {
-    for (size_t i = 0; i < m_quick_snapshot.groups.size() && i < 4; ++i)
-      favorites.insert(m_quick_snapshot.groups[i].schema_index);
-    return favorites;
-  }
-  const wchar_t* cursor = buffer;
-  while (*cursor) {
-    wchar_t* end = nullptr;
-    const long value = std::wcstol(cursor, &end, 10);
-    if (end == cursor)
-      break;
-    favorites.insert(static_cast<int>(value));
-    cursor = *end == L',' ? end + 1 : end;
-  }
-  return favorites;
-}
-
-void WeaselTrayIcon::SaveQuickFavorites(const std::set<int>& favorites) const {
-  std::wstring value;
-  for (int index : favorites) {
-    if (!value.empty())
-      value += L",";
-    value += std::to_wstring(index);
-  }
-  const auto value_name = L"Favorites:" + u8tow(m_quick_snapshot.schema_id);
-  constexpr wchar_t key[] = L"Software\\Rime\\Weasel\\QuickSwitches";
-  ::RegSetKeyValueW(HKEY_CURRENT_USER, key, value_name.c_str(), REG_SZ,
-                    value.c_str(),
-                    static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-}
-
 bool WeaselTrayIcon::HandleQuickSwitchCommand(UINT id) {
-  const auto action = m_quick_actions.find(id);
-  if (action == m_quick_actions.end())
-    return false;
-  if (action->second.state == -2) {
-    auto favorites = LoadQuickFavorites();
-    if (favorites.count(action->second.schema_index))
-      favorites.erase(action->second.schema_index);
-    else
-      favorites.insert(action->second.schema_index);
-    SaveQuickFavorites(favorites);
-  } else if (m_switch_select) {
-    m_switch_select(m_quick_snapshot, action->second.schema_index,
-                    action->second.state);
-  }
-  return true;
+  return m_quick_menu.HandleCommand(id, m_switch_select);
 }
 
 BOOL WeaselTrayIcon::Create(HWND hTargetWnd) {

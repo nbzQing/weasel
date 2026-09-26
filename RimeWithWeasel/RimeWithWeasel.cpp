@@ -559,18 +559,21 @@ void RimeWithWeaselHandler::EndMaintenance() {
   m_last_input_session = 0;
 }
 
-weasel::QuickSwitchSnapshot RimeWithWeaselHandler::GetQuickSwitches() {
+weasel::QuickSwitchSnapshot RimeWithWeaselHandler::GetQuickSwitches(
+    DWORD requested_session) {
   weasel::QuickSwitchSnapshot snapshot;
-  if (m_disabled || !m_last_input_session)
+  const DWORD ipc_id =
+      requested_session ? requested_session : m_last_input_session;
+  if (m_disabled || !ipc_id)
     return snapshot;
-  const auto session = m_session_status_map.find(m_last_input_session);
+  const auto session = m_session_status_map.find(ipc_id);
   if (session == m_session_status_map.end() || !session->second.session_id ||
       !rime_api->find_session(session->second.session_id))
     return snapshot;
   RIME_STRUCT(RimeStatus, status);
   if (!rime_api->get_status(session->second.session_id, &status))
     return snapshot;
-  snapshot.session_id = m_last_input_session;
+  snapshot.session_id = ipc_id;
   snapshot.schema_id = status.schema_id ? status.schema_id : "";
   rime_api->free_status(&status);
   if (snapshot.schema_id.empty())

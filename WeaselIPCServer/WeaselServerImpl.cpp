@@ -5,6 +5,7 @@
 #include <resource.h>
 #include <WeaselUserSettings.h>
 #include <WeaselUtility.h>
+#include <WeaselQuickSwitchWire.h>
 
 namespace weasel {
 class PipeServer : public PipeChannel<DWORD, PipeMessage> {
@@ -291,6 +292,51 @@ DWORD ServerImpl::OnCapsLockState(WEASEL_IPC_COMMAND, DWORD wParam, DWORD) {
   return 1;
 }
 
+DWORD ServerImpl::OnGetQuickSwitches(WEASEL_IPC_COMMAND,
+                                     DWORD,
+                                     DWORD session_id) {
+  if (!m_pRequestHandler || !session_id)
+    return 0;
+  const auto snapshot = m_pRequestHandler->GetQuickSwitches(session_id);
+  if (snapshot.session_id != session_id || snapshot.groups.empty())
+    return 0;
+  const auto wire = SerializeQuickSwitchSnapshot(snapshot);
+  // PipeChannel reserves four bytes for the result in its 64 KiB buffer.
+  if (wire.size() >= 32000)
+    return 0;
+  *channel << wire.c_str();
+  return 1;
+}
+
+DWORD ServerImpl::OnSelectQuickSwitch(WEASEL_IPC_COMMAND,
+                                      DWORD action,
+                                      DWORD session_id) {
+  if (!m_pRequestHandler || !session_id)
+    return 0;
+  const auto snapshot = m_pRequestHandler->GetQuickSwitches(session_id);
+  if (snapshot.session_id != session_id || snapshot.schema_id.empty())
+    return 0;
+  std::wstring requested_schema;
+  const std::function<bool(LPWSTR, UINT)> read_schema = [&](LPWSTR buffer,
+                                                            UINT length) {
+    const size_t limit =
+        (std::min)(static_cast<size_t>(length), static_cast<size_t>(256));
+    const size_t size = wcsnlen_s(buffer, limit);
+    if (size == limit)
+      return false;
+    requested_schema.assign(buffer, size);
+    return true;
+  };
+  if (!channel->HandleResponseData(read_schema) ||
+      requested_schema != u8tow(snapshot.schema_id))
+    return 0;
+  const int schema_index = static_cast<int>(action >> 16);
+  const int state = static_cast<int>(action & 0xffff);
+  return m_pRequestHandler->SelectQuickSwitch(snapshot, schema_index, state)
+             ? 1
+             : 0;
+}
+
 DWORD ServerImpl::OnShutdownServer(WEASEL_IPC_COMMAND uMsg,
                                    DWORD wParam,
                                    DWORD lParam) {
@@ -457,6 +503,8 @@ void ServerImpl::HandlePipeMessage(PipeMessage pipe_msg, _Resp resp) {
   PIPE_MSG_HANDLE(WEASEL_IPC_END_SESSION, OnEndSession)
   PIPE_MSG_HANDLE(WEASEL_IPC_PROCESS_KEY_EVENT, OnKeyEvent)
   PIPE_MSG_HANDLE(WEASEL_IPC_UPDATE_CAPS_LOCK, OnCapsLockState)
+  PIPE_MSG_HANDLE(WEASEL_IPC_GET_QUICK_SWITCHES, OnGetQuickSwitches)
+  PIPE_MSG_HANDLE(WEASEL_IPC_SELECT_QUICK_SWITCH, OnSelectQuickSwitch)
   PIPE_MSG_HANDLE(WEASEL_IPC_SHUTDOWN_SERVER, OnShutdownServer)
   PIPE_MSG_HANDLE(WEASEL_IPC_FOCUS_IN, OnFocusIn)
   PIPE_MSG_HANDLE(WEASEL_IPC_FOCUS_OUT, OnFocusOut)

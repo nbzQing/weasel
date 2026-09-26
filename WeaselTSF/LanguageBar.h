@@ -1,6 +1,7 @@
 #pragma once
 #include <msctf.h>
 #include <WeaselUI.h>
+#include <WeaselQuickSwitchMenu.h>
 
 class CLangBarItemButton : public ITfLangBarItemButton, public ITfSource {
  public:
@@ -46,4 +47,5 @@ class CLangBarItemButton : public ITfLangBarItemButton, public ITfSource {
   bool caps_lock;
   weasel::UIStyle& _style;
   std::wstring _schema_id;
+  weasel::QuickSwitchMenu _quick_menu;
 };

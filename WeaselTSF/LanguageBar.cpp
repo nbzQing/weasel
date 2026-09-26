@@ -180,11 +180,14 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click,
       } else {
         menu = LoadMenuW(g_hInst, MAKEINTRESOURCE(IDR_MENU_POPUP));
       }
+      if (!menu)
+        return S_OK;
       HMENU popupMenu = GetSubMenu(menu, 0);
+      _quick_menu.Populate(popupMenu, _pTextService->_GetQuickSwitches());
       UINT wID = weasel::TrackTrayMenu(popupMenu, pt, hwnd,
                                        TPM_NONOTIFY | TPM_RETURNCMD, prcArea);
       DestroyMenu(menu);
-      _pTextService->_HandleLangBarMenuSelect(wID);
+      OnMenuSelect(wID);
     }
   }
   return S_OK;
@@ -192,14 +195,23 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click,
 
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
   HMENU menu = LoadMenuW(g_hInst, MAKEINTRESOURCE(IDR_MENU_POPUP));
+  if (!menu)
+    return E_FAIL;
   HMENU popupMenu = GetSubMenu(menu, 0);
+  _quick_menu.Populate(popupMenu, _pTextService->_GetQuickSwitches());
   const HRESULT result = weasel::CopyMenuToTfMenu(popupMenu, pMenu);
   DestroyMenu(menu);
   return result;
 }
 
 STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
-  _pTextService->_HandleLangBarMenuSelect(wID);
+  if (!_quick_menu.HandleCommand(
+          wID, [this](const weasel::QuickSwitchSnapshot& snapshot,
+                      int schema_index, int state) {
+            return _pTextService->_SelectQuickSwitch(snapshot, schema_index,
+                                                     state);
+          }))
+    _pTextService->_HandleLangBarMenuSelect(wID);
   return S_OK;
 }
 
@@ -288,6 +300,16 @@ std::wstring WeaselTSF::_GetRootDir() {
   std::wstring dir{};
   RegGetStringValue(HKEY_LOCAL_MACHINE, GetWeaselRegName(), L"WeaselRoot", dir);
   return dir;
+}
+
+weasel::QuickSwitchSnapshot WeaselTSF::_GetQuickSwitches() {
+  return m_client.GetQuickSwitches();
+}
+
+bool WeaselTSF::_SelectQuickSwitch(const weasel::QuickSwitchSnapshot& snapshot,
+                                   int schema_index,
+                                   int state) {
+  return m_client.SelectQuickSwitch(snapshot, schema_index, state);
 }
 
 void WeaselTSF::_HandleLangBarMenuSelect(UINT wID) {

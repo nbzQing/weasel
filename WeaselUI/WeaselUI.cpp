@@ -184,7 +184,13 @@ void UI::Update(const Context& ctx, const Status& status) {
     return;
   ctx_ = ctx;
   status_ = status;
-  if (style_.candidate_abbreviate_length > 0) {
+  // A lone multi-line candidate (for example a statistics report) needs its
+  // full text so the layout can measure and grow to every line.
+  const bool single_multiline_candidate =
+      ctx_.cinfo.candies.size() == 1 &&
+      ctx_.cinfo.candies.front().str.find_first_of(L"\r\n") !=
+          std::wstring::npos;
+  if (style_.candidate_abbreviate_length > 0 && !single_multiline_candidate) {
     for (auto& c : ctx_.cinfo.candies) {
       if (c.str.length() > (size_t)style_.candidate_abbreviate_length) {
         c.str =

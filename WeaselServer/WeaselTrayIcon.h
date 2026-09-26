@@ -1,13 +1,12 @@
 #pragma once
 #include <WeaselUI.h>
 #include <WeaselIPC.h>
+#include <WeaselQuickSwitchMenu.h>
 #include "SystemTraySDK.h"
 
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
-#include <map>
-#include <set>
 
 #define WM_WEASEL_TRAY_NOTIFY (WEASEL_IPC_LAST_COMMAND + 100)
 
@@ -104,15 +103,8 @@ class WeaselTrayIcon : public CSystemTray {
   WeaselTrayIconState m_pending_state;
   std::mutex m_state_mutex;
   std::condition_variable m_state_cv;
-  struct QuickAction {
-    int schema_index = -1;
-    int state = -1;  // -1 toggles a favorite, -2 changes its pin.
-  };
-  std::map<UINT, QuickAction> m_quick_actions;
-  weasel::QuickSwitchSnapshot m_quick_snapshot;
+  weasel::QuickSwitchMenu m_quick_menu;
   std::function<weasel::QuickSwitchSnapshot()> m_switch_snapshot;
   std::function<bool(const weasel::QuickSwitchSnapshot&, int, int)>
       m_switch_select;
-  std::set<int> LoadQuickFavorites() const;
-  void SaveQuickFavorites(const std::set<int>& favorites) const;
 };

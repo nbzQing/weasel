@@ -23,6 +23,8 @@ class weasel::UIImpl {
   void Show();
   void Hide();
   void ShowWithTimeout(size_t millisec);
+  void UpdateInputPosition(RECT const& rc);
+  void CancelInitialShow();
   bool IsShown() const { return shown; }
   void ReloadUserSettings() {
     if (panel.IsWindow())
@@ -33,14 +35,27 @@ class weasel::UIImpl {
                                _In_ UINT uMsg,
                                _In_ UINT_PTR idEvent,
                                _In_ DWORD dwTime);
+  static VOID CALLBACK OnInitialShowTimer(_In_ HWND hwnd,
+                                          _In_ UINT uMsg,
+                                          _In_ UINT_PTR idEvent,
+                                          _In_ DWORD dwTime);
   static const int AUTOHIDE_TIMER = 20121220;
+  static const int INITIAL_SHOW_TIMER = 20121221;
   static UINT_PTR timer;
   bool shown;
+  bool initialShowPending = false;
+  bool hasFreshAnchor = false;
+  DWORD initialShowTick = 0;
+  DWORD latestAnchorTick = 0;
+
+ private:
+  void ShowNow();
+  void ScheduleInitialShow();
 };
 
 UINT_PTR UIImpl::timer = 0;
 
-void UIImpl::Show() {
+void UIImpl::ShowNow() {
   if (!panel.IsWindow())
     return;
   panel.ShowWindow(SW_SHOWNA);
@@ -52,12 +67,91 @@ void UIImpl::Show() {
   }
 }
 
+void UIImpl::ScheduleInitialShow() {
+  if (!panel.IsWindow() || !initialShowPending)
+    return;
+  // The candidate content can be ready before the host's asynchronous text
+  // extent. Keep the first frame hidden while subsequent layout notifications
+  // replace a provisional caret rectangle, regardless of the host application.
+  constexpr DWORD kAnchorQuietMs = 50;
+  constexpr DWORD kMaximumWaitMs = 120;
+  const DWORD now = GetTickCount();
+  const DWORD elapsed = now - initialShowTick;
+  const DWORD remaining =
+      elapsed < kMaximumWaitMs ? kMaximumWaitMs - elapsed : 0;
+  const DWORD anchorElapsed = now - latestAnchorTick;
+  const DWORD quietRemaining = hasFreshAnchor && anchorElapsed < kAnchorQuietMs
+                                   ? kAnchorQuietMs - anchorElapsed
+                                   : 0;
+  const DWORD delay =
+      hasFreshAnchor ? min(quietRemaining, remaining) : remaining;
+  if (delay == 0) {
+    CancelInitialShow();
+    ShowNow();
+    return;
+  }
+  if (!SetTimer(panel.m_hWnd, INITIAL_SHOW_TIMER, delay,
+                &UIImpl::OnInitialShowTimer)) {
+    CancelInitialShow();
+    ShowNow();
+  }
+}
+
+void UIImpl::Show() {
+  if (!panel.IsWindow() || shown)
+    return;
+  if (!initialShowPending) {
+    initialShowPending = true;
+    initialShowTick = GetTickCount();
+    if (!SetPropW(panel.m_hWnd, L"WeaselInitialShowOwner", this)) {
+      initialShowPending = false;
+      ShowNow();
+      return;
+    }
+  }
+  ScheduleInitialShow();
+}
+
+void UIImpl::CancelInitialShow() {
+  if (panel.IsWindow()) {
+    KillTimer(panel.m_hWnd, INITIAL_SHOW_TIMER);
+    RemovePropW(panel.m_hWnd, L"WeaselInitialShowOwner");
+  }
+  initialShowPending = false;
+}
+
+void UIImpl::UpdateInputPosition(RECT const& rc) {
+  if (!panel.IsWindow())
+    return;
+  panel.MoveTo(rc);
+  if (rc.bottom > rc.top) {
+    hasFreshAnchor = true;
+    latestAnchorTick = GetTickCount();
+  } else {
+    hasFreshAnchor = false;
+  }
+  if (initialShowPending)
+    ScheduleInitialShow();
+}
+
+VOID CALLBACK UIImpl::OnInitialShowTimer(_In_ HWND hwnd,
+                                         _In_ UINT uMsg,
+                                         _In_ UINT_PTR idEvent,
+                                         _In_ DWORD dwTime) {
+  auto* self =
+      reinterpret_cast<UIImpl*>(GetPropW(hwnd, L"WeaselInitialShowOwner"));
+  if (self && self->initialShowPending)
+    self->ScheduleInitialShow();
+}
+
 void UIImpl::Hide() {
   if (!panel.IsWindow())
     return;
+  CancelInitialShow();
   panel.HideAcrylicBackdrop();
   panel.ShowWindow(SW_HIDE);
   shown = false;
+  hasFreshAnchor = false;
   if (timer) {
     KillTimer(panel.m_hWnd, AUTOHIDE_TIMER);
     timer = 0;
@@ -67,6 +161,7 @@ void UIImpl::Hide() {
 void UIImpl::ShowWithTimeout(size_t millisec) {
   if (!panel.IsWindow())
     return;
+  CancelInitialShow();
   DLOG(INFO) << "ShowWithTimeout: " << millisec;
   panel.ShowWindow(SW_SHOWNA);
   panel.ShowAcrylicBackdrop();
@@ -91,6 +186,9 @@ VOID CALLBACK UIImpl::OnTimer(_In_ HWND hwnd,
 
 bool UI::Create(HWND parent) {
   if (pimpl_) {
+    pimpl_->CancelInitialShow();
+    pimpl_->shown = false;
+    pimpl_->hasFreshAnchor = false;
     pimpl_->panel.Create(
         parent, 0, 0, WS_POPUP,
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
@@ -117,6 +215,9 @@ bool UI::Create(HWND parent) {
 
 void UI::Destroy(bool full) {
   if (pimpl_) {
+    pimpl_->CancelInitialShow();
+    pimpl_->shown = false;
+    pimpl_->hasFreshAnchor = false;
     // destroy panel
     if (pimpl_->panel.IsWindow()) {
       pimpl_->panel.DestroyWindow();
@@ -175,7 +276,7 @@ void UI::ReloadUserSettings() {
 
 void UI::UpdateInputPosition(RECT const& rc) {
   if (pimpl_ && pimpl_->panel.IsWindow()) {
-    pimpl_->panel.MoveTo(rc);
+    pimpl_->UpdateInputPosition(rc);
   }
 }
 

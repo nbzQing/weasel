@@ -1086,14 +1086,13 @@ class PackageUpdateDialog : public CDialogImpl<PackageUpdateDialog> {
       ::SendMessageW(model, BM_SETCHECK, BST_CHECKED, 0);
     }
     if (result_.scheme_update_available) {
-      ::SetDlgItemTextW(m_hWnd, IDC_UPDATE_SUMMARY,
-                        Localize(L"输入方案更新会保留用户自定义文件，安装前自动"
-                                 L"备份，完成后自动重新部署。",
-                                 L"輸入方案更新會保留使用者自訂檔案，安裝前自動"
-                                 L"備份，完成後自動重新部署。",
-                                 L"Schema updates preserve user files, create "
-                                 L"a backup, and redeploy automatically.")
-                            .c_str());
+      ::SetDlgItemTextW(
+          m_hWnd, IDC_UPDATE_SUMMARY,
+          Localize(L"保留并备份用户文件；多项更新全部安装后仅部署一次。",
+                   L"保留並備份使用者檔案；多項更新全部安裝後僅部署一次。",
+                   L"User files are backed up. When both are "
+                   L"selected, deploy once after both install.")
+              .c_str());
     } else {
       ::SetDlgItemTextW(m_hWnd, IDC_UPDATE_SUMMARY, L"");
     }
@@ -1369,7 +1368,8 @@ void SwitcherSettingsDialog::UpdateApplyButton() {
   settings_navigation::SetUnappliedChanges(
       m_hWnd, settings_navigation::Page::Input, pending);
   ::EnableWindow(GetDlgItem(IDOK),
-                 settings_navigation::HasAnyUnappliedChanges());
+                 !combined_update_pending_ && !scheme_update_operation_ &&
+                     settings_navigation::HasAnyUnappliedChanges());
 }
 
 void SwitcherSettingsDialog::DiscardPendingModel() {
@@ -2093,8 +2093,12 @@ void SwitcherSettingsDialog::UpdateModelUi(
     model_button_accent_ = true;
   }
   if (pending_model_action_ == PendingModelAction::Install) {
-    note = LocalText(L"已安装 · 待应用", L"已安裝 · 待套用",
-                     L"Installed · Apply pending");
+    note = combined_update_pending_
+               ? LocalText(L"已安装 · 正在更新方案，完成后自动部署",
+                           L"已安裝 · 正在更新方案，完成後自動部署",
+                           L"Installed · Updating schema before deployment")
+               : LocalText(L"已安装 · 待应用", L"已安裝 · 待套用",
+                           L"Installed · Apply pending");
     primary.clear();
     secondary.clear();
   } else if (pending_model_action_ == PendingModelAction::Remove) {
@@ -2125,6 +2129,14 @@ void SwitcherSettingsDialog::UpdateModelUi(
       primary = LocalText(L"重试安装", L"重試安裝", L"Retry install");
       enabled = true;
     }
+  }
+  if (combined_update_pending_ &&
+      (state == State::Downloading || state == State::WaitingRetry ||
+       state == State::Paused || state == State::Transferred)) {
+    note = LocalText(L"语法模型安装后继续更新方案，最后统一重新部署。",
+                     L"語法模型安裝後繼續更新方案，最後統一重新部署。",
+                     L"The schema update follows model installation; "
+                     L"deployment runs once at the end.");
   }
   if ((state == State::Installed || state == State::Modified) && note.empty()) {
     SYSTEMTIME installed = {};
@@ -2631,18 +2643,23 @@ void SwitcherSettingsDialog::FinishModelDownload() {
   model_operation_failed_ = true;
   std::wstring error;
   if (!model_manager_.CompleteAndInstall(&error)) {
+    combined_update_pending_ = false;
     ::MessageBoxW(m_hWnd, error.c_str(),
                   LocalText(L"语法模型校验失败", L"語法模型校驗失敗",
                             L"Grammar model verification failed")
                       .c_str(),
                   MB_OK | MB_ICONERROR);
     UpdateModelUi();
+    UpdateApplyButton();
+    UpdateCheckButton();
     return;
   }
   model_operation_failed_ = false;
   pending_model_action_ = PendingModelAction::Install;
   UpdateApplyButton();
   UpdateModelUi();
+  if (combined_update_pending_)
+    StartSchemeUpdate(latest_scheme_release_, true);
 }
 
 LRESULT SwitcherSettingsDialog::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&) {
@@ -2832,7 +2849,14 @@ LRESULT SwitcherSettingsDialog::OnInitDialog(UINT, WPARAM, LPARAM, BOOL&) {
 }
 
 LRESULT SwitcherSettingsDialog::OnClose(UINT, WPARAM, LPARAM, BOOL&) {
-  if (apply_operation_) {
+  if (combined_update_pending_ && !scheme_update_operation_) {
+    model_manager_.Cancel();
+    combined_update_pending_ = false;
+    PrepareClose();
+    EndDialog(IDCANCEL);
+    return 0;
+  }
+  if (IsApplying()) {
     close_after_apply_ = true;
     ShowWindow(SW_HIDE);
     return 0;
@@ -2847,7 +2871,14 @@ LRESULT SwitcherSettingsDialog::OnClose(UINT, WPARAM, LPARAM, BOOL&) {
 }
 
 LRESULT SwitcherSettingsDialog::OnCloseCommand(WORD, WORD, HWND, BOOL&) {
-  if (apply_operation_) {
+  if (combined_update_pending_ && !scheme_update_operation_) {
+    model_manager_.Cancel();
+    combined_update_pending_ = false;
+    PrepareClose();
+    EndDialog(IDCANCEL);
+    return 0;
+  }
+  if (IsApplying()) {
     close_after_apply_ = true;
     ShowWindow(SW_HIDE);
     return 0;
@@ -2863,7 +2894,7 @@ LRESULT SwitcherSettingsDialog::OnCloseCommand(WORD, WORD, HWND, BOOL&) {
 
 LRESULT SwitcherSettingsDialog::OnNavigate(WORD, WORD id, HWND, BOOL&) {
   const auto page = settings_navigation::PageFromCommand(id);
-  if (page == settings_navigation::Page::Input || apply_operation_)
+  if (page == settings_navigation::Page::Input || IsApplying())
     return 0;
   if (settings_navigation::RequestNavigate(m_hWnd, id))
     return 0;
@@ -2897,11 +2928,15 @@ LRESULT SwitcherSettingsDialog::OnTimer(UINT, WPARAM timer, LPARAM, BOOL&) {
              ModelUiNeedsRefresh(progress)) {
     UpdateModelUi(&progress);
   }
+  if (close_after_apply_ && !IsApplying()) {
+    PrepareClose();
+    EndDialog(IDCANCEL);
+  }
   return 0;
 }
 
 LRESULT SwitcherSettingsDialog::OnCheckUpdates(WORD, WORD, HWND, BOOL&) {
-  if (update_check_ || scheme_update_operation_)
+  if (update_check_ || scheme_update_operation_ || combined_update_pending_)
     return 0;
   open_update_list_after_check_ = true;
   HWND button = GetDlgItem(IDC_CHECK_SCHEME_UPDATES);
@@ -3059,6 +3094,14 @@ void SwitcherSettingsDialog::UpdateCheckButton() {
     ::ShowWindow(status, SW_SHOW);
     return;
   }
+  if (combined_update_pending_) {
+    check_button_accent_ = false;
+    ::SetWindowTextW(button, LocalText(L"正在更新 · 1/2", L"正在更新 · 1/2",
+                                       L"Updating · 1/2")
+                                 .c_str());
+    ::EnableWindow(button, FALSE);
+    return;
+  }
   if (update_check_ && !update_check_->done.load()) {
     check_button_accent_ = false;
     ::SetWindowTextW(
@@ -3140,7 +3183,10 @@ void SwitcherSettingsDialog::ShowUpdateList() {
   PackageUpdateDialog dialog(result);
   if (dialog.DoModal(m_hWnd) != IDOK)
     return;
-  if (dialog.selection().scheme)
+  const bool combined = dialog.selection().scheme && dialog.selection().model;
+  if (combined)
+    combined_update_pending_ = true;
+  else if (dialog.selection().scheme)
     StartSchemeUpdate(latest_scheme_release_);
   if (!dialog.selection().model)
     return;
@@ -3150,6 +3196,7 @@ void SwitcherSettingsDialog::ShowUpdateList() {
     model_manager_.ConfigureTarget(latest_model_sha256_, latest_model_size_);
   const bool started = model_manager_.Start(&error);
   if (!started) {
+    combined_update_pending_ = false;
     ::MessageBoxW(
         m_hWnd, error.c_str(),
         LocalText(L"无法开始更新", L"無法開始更新", L"Unable to update")
@@ -3157,15 +3204,19 @@ void SwitcherSettingsDialog::ShowUpdateList() {
         MB_OK | MB_ICONERROR);
   }
   UpdateModelUi();
+  UpdateApplyButton();
+  UpdateCheckButton();
   if (started && schema_list_.IsWindow())
     schema_list_.SetFocus();
 }
 
 void SwitcherSettingsDialog::StartSchemeUpdate(
-    const WanxiangUpdateManager::SchemeRelease& release) {
+    const WanxiangUpdateManager::SchemeRelease& release,
+    bool with_model) {
   if (scheme_update_operation_)
     return;
   scheme_update_operation_ = std::make_shared<SchemeUpdateOperation>();
+  scheme_update_operation_->with_model = with_model;
   ::EnableWindow(GetDlgItem(IDOK), FALSE);
   UpdateCheckButton();
   auto operation = scheme_update_operation_;
@@ -3218,6 +3269,21 @@ void SwitcherSettingsDialog::StartSchemeUpdate(
     const bool deployed = configurator.UpdateWorkspace(false) == 0;
     const std::wstring deployment_error =
         deployed ? std::wstring() : CollectDeploymentErrors(deployment_started);
+    if (operation->with_model && !deployed) {
+      std::wstring rollback_error;
+      operation->phase.store(SchemeUpdateOperation::Phase::RollingBack);
+      operation->restored = manager.Rollback(&rollback_error);
+      operation->error =
+          operation->restored
+              ? L"方案和语法模型已安装，但重新部署失败；方案文件已恢复。"
+              : L"方案和语法模型已安装，但重新部署及方案文件恢复均失败。";
+      if (!deployment_error.empty())
+        operation->error += L"\n\n部署失败原因：\n" + deployment_error;
+      if (!rollback_error.empty())
+        operation->error += L"\n" + rollback_error;
+      operation->done.store(true);
+      return;
+    }
     operation->phase.store(SchemeUpdateOperation::Phase::Finalizing);
     if (!manager.Commit(&error)) {
       std::wstring rollback_error;
@@ -3256,6 +3322,44 @@ void SwitcherSettingsDialog::FinishSchemeUpdate() {
     return;
   const auto operation = scheme_update_operation_;
   scheme_update_operation_.reset();
+  if (operation->with_model) {
+    std::wstring model_error;
+    if (operation->success) {
+      if (model_manager_.Commit(&model_error)) {
+        pending_model_action_ = PendingModelAction::None;
+        model_operation_failed_ = false;
+        model_update_available_ = false;
+      } else {
+        // Deployment already used this model. Keep the installed file in place
+        // so the running configuration still matches it; Apply can retry the
+        // remaining installation bookkeeping.
+        pending_model_action_ = PendingModelAction::Install;
+        model_operation_failed_ = true;
+        operation->error =
+            L"方案和语法模型已重新部署，但语法模型安装记录未能完成；"
+            L"请点击“应用”重试。";
+        if (!model_error.empty())
+          operation->error += L"\n" + model_error;
+      }
+    } else {
+      std::wstring rollback_error;
+      const bool restored = model_manager_.Rollback(&rollback_error);
+      pending_model_action_ =
+          restored ? PendingModelAction::None : PendingModelAction::Install;
+      model_operation_failed_ = !restored;
+      if (!rollback_error.empty())
+        operation->error += L"\n语法模型恢复失败：" + rollback_error;
+    }
+    combined_update_pending_ = false;
+    UpdateModelUi();
+  }
+  const auto notify = [&](const std::wstring& message,
+                          const std::wstring& title, UINT flags) {
+    if (close_after_apply_)
+      LOG(INFO) << wtou8(title) << ": " << wtou8(message);
+    else
+      ::MessageBoxW(m_hWnd, message.c_str(), title.c_str(), flags);
+  };
   if (operation->success) {
     scheme_update_available_ = false;
     WanxiangUpdateManager::StoreAvailableCount(model_update_available_ ? 1u
@@ -3265,32 +3369,35 @@ void SwitcherSettingsDialog::FinishSchemeUpdate() {
       ShowDetails(selected_schema_);
     }
     if (operation->error.empty()) {
-      ::MessageBoxW(
-          m_hWnd,
+      notify(
           (LocalText(L"万象拼音 Lite 已更新到 ", L"萬象拼音 Lite 已更新到 ",
                      L"Wanxiang Lite was updated to ") +
            operation->installed_tag +
-           LocalText(L"，并已完成重新部署。", L"，並已完成重新部署。",
-                     L" and redeployed."))
-              .c_str(),
+           (operation->with_model
+                ? LocalText(L"，语法模型也已安装，并已统一重新部署。",
+                            L"，語法模型也已安裝，並已統一重新部署。",
+                            L". The grammar model was installed and both were "
+                            L"redeployed together.")
+                : LocalText(L"，并已完成重新部署。", L"，並已完成重新部署。",
+                            L" and redeployed."))),
           LocalText(L"输入方案更新完成", L"輸入方案更新完成",
-                    L"Schema update complete")
-              .c_str(),
+                    L"Schema update complete"),
           MB_OK | MB_ICONINFORMATION);
     } else {
-      ::MessageBoxW(m_hWnd, operation->error.c_str(),
-                    LocalText(L"方案文件已更新，部署未完成",
+      notify(operation->error,
+             (operation->with_model
+                  ? LocalText(L"更新部分完成", L"更新部分完成",
+                              L"Update partially complete")
+                  : LocalText(L"方案文件已更新，部署未完成",
                               L"方案檔案已更新，部署未完成",
-                              L"Schema files updated; deployment incomplete")
-                        .c_str(),
-                    MB_OK | MB_ICONWARNING);
+                              L"Schema files updated; deployment incomplete")),
+             MB_OK | MB_ICONWARNING);
     }
   } else {
-    ::MessageBoxW(m_hWnd, operation->error.c_str(),
-                  LocalText(L"输入方案更新失败", L"輸入方案更新失敗",
-                            L"Schema update failed")
-                      .c_str(),
-                  MB_OK | MB_ICONERROR);
+    notify(operation->error,
+           LocalText(L"输入方案更新失败", L"輸入方案更新失敗",
+                     L"Schema update failed"),
+           MB_OK | MB_ICONERROR);
   }
   UpdateCheckButton();
   UpdateLastCheckText();
@@ -3417,8 +3524,11 @@ LRESULT SwitcherSettingsDialog::OnModelSecondary(WORD, WORD, HWND, BOOL&) {
       state == WanxiangModelManager::State::RestartRequired ||
       state == WanxiangModelManager::State::Error) {
     model_manager_.Cancel();
+    combined_update_pending_ = false;
     model_operation_failed_ = false;
     UpdateModelUi();
+    UpdateApplyButton();
+    UpdateCheckButton();
     return 0;
   }
 
@@ -3442,7 +3552,7 @@ LRESULT SwitcherSettingsDialog::OnModelSecondary(WORD, WORD, HWND, BOOL&) {
 }
 
 bool SwitcherSettingsDialog::ApplyChanges() {
-  if (scheme_update_operation_ && !scheme_update_operation_->done.load())
+  if (combined_update_pending_ || scheme_update_operation_)
     return false;
   const bool schema_selection_modified = HasSchemaSelectionChanges();
   if (!HasPendingChanges()) {

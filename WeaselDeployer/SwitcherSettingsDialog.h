@@ -23,8 +23,8 @@ class SwitcherSettingsDialog
   bool HasUnappliedChanges() const;
   bool ApplyChanges();
   bool IsApplying() const {
-    return apply_operation_ != nullptr ||
-           (scheme_update_operation_ && !scheme_update_operation_->done.load());
+    return apply_operation_ != nullptr || combined_update_pending_ ||
+           scheme_update_operation_ != nullptr;
   }
   bool ConfirmClose();
   void PrepareClose();
@@ -95,7 +95,8 @@ class SwitcherSettingsDialog
   void SetApplyingUi(bool applying);
   void FinishUpdateCheck();
   void FinishSchemeUpdate();
-  void StartSchemeUpdate(const WanxiangUpdateManager::SchemeRelease& release);
+  void StartSchemeUpdate(const WanxiangUpdateManager::SchemeRelease& release,
+                         bool with_model = false);
   void UpdateCheckButton();
   void UpdateLastCheckText();
   void ShowUpdateList();
@@ -163,6 +164,7 @@ class SwitcherSettingsDialog
       Finalizing,
     };
     bool success = false;
+    bool with_model = false;
     bool restored = false;
     std::wstring error;
     std::wstring installed_tag;
@@ -182,6 +184,7 @@ class SwitcherSettingsDialog
   std::shared_ptr<ApplyOperation> apply_operation_;
   bool close_after_apply_ = false;
   bool model_operation_failed_ = false;
+  bool combined_update_pending_ = false;
   bool scheme_update_available_ = false;
   bool model_update_available_ = false;
   bool open_update_list_after_check_ = false;

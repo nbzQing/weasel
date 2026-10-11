@@ -18,3 +18,19 @@ index d401aca..61d58f4 100644
      }
  
      if( !info.ReleaseNotesURL.empty() )
+diff --git a/src/updatechecker.cpp b/src/updatechecker.cpp
+--- a/src/updatechecker.cpp
++++ b/src/updatechecker.cpp
+@@ -258,3 +258,12 @@ void UpdateChecker::PerformUpdateCheck()
++        // A periodic check may run silently; explicit menu checks still show
++        // the update dialog regardless of this notification preference.
++        if (dynamic_cast<const PeriodicUpdateChecker*>(this) != nullptr)
++        {
++            bool showNotification;
++            Settings::ReadConfigValue("ShowUpdateNotification", showNotification, true);
++            if (!showNotification)
++                return;
++        }
+         UI::NotifyUpdateAvailable(appcast, ShouldAutomaticallyInstall());
+     }
+     catch ( ... )

@@ -28,6 +28,7 @@ inline constexpr WORD kKeys = 30005;
 inline constexpr WORD kStatusIcons = 30006;
 inline constexpr WORD kUserFolder = 30007;
 inline constexpr WORD kCandidateGroup = 30008;
+inline constexpr WORD kUpdateNotification = 30009;
 static_assert(settings_theme::kNavigation != kInput &&
               settings_theme::kNavigation != kAppearance &&
               settings_theme::kNavigation != kLayout &&
@@ -35,11 +36,13 @@ static_assert(settings_theme::kNavigation != kInput &&
               settings_theme::kNavigation != kKeys &&
               settings_theme::kNavigation != kStatusIcons &&
               settings_theme::kNavigation != kUserFolder &&
-              settings_theme::kNavigation != kCandidateGroup);
+              settings_theme::kNavigation != kCandidateGroup &&
+              settings_theme::kNavigation != kUpdateNotification);
 inline constexpr UINT kHostNavigateMessage = WM_APP + 0x531;
 inline constexpr UINT kHostCloseMessage = WM_APP + 0x532;
 inline constexpr UINT kHostApplyMessage = WM_APP + 0x533;
 inline constexpr UINT kHostStateChangedMessage = WM_APP + 0x534;
+inline constexpr UINT kOpenUpdateNotification = WM_APP + 0x537;
 inline constexpr wchar_t kHostProperty[] = L"Weasel.SettingsHost";
 inline constexpr wchar_t kComboAnimationProperty[] =
     L"Weasel.ComboAnimationSuppressed";
@@ -441,6 +444,12 @@ inline LRESULT CALLBACK SidebarProc(HWND window,
                                     UINT_PTR,
                                     DWORD_PTR data) {
   auto* state = reinterpret_cast<SidebarState*>(data);
+  if (message == WM_COMMAND && LOWORD(wparam) == kUpdateNotification &&
+      HIWORD(wparam) == BN_CLICKED) {
+    ::SendMessageW(::GetAncestor(window, GA_ROOT), kOpenUpdateNotification, 0,
+                   lparam);
+    return 0;
+  }
   if (message == WM_COMMAND && LOWORD(wparam) == kCandidateGroup &&
       HIWORD(wparam) == BN_CLICKED) {
     // A cached page can still have its previous child visibility after the
@@ -596,6 +605,7 @@ struct CheckboxState {
 
 struct SwitchState {
   bool hover = false;
+  ToggleState::Background background = ToggleState::Background::Window;
 };
 
 struct ComboState {
@@ -1363,7 +1373,10 @@ inline LRESULT CALLBACK SwitchProc(HWND window,
     return result;
   } else if (message == WM_PAINT) {
     PaintBuffered(window, [&](HDC dc, const RECT& bounds) {
-      ::FillRect(dc, &bounds, settings_theme::GetBrush(COLOR_WINDOW));
+      const COLORREF surface = ControlBackground(state->background);
+      HBRUSH background = ::CreateSolidBrush(surface);
+      ::FillRect(dc, &bounds, background);
+      ::DeleteObject(background);
       const bool enabled = ::IsWindowEnabled(window) != FALSE;
       const bool checked =
           ::SendMessageW(window, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -1373,7 +1386,6 @@ inline LRESULT CALLBACK SwitchProc(HWND window,
       const int left = bounds.right - track_width;
       const int top = (bounds.bottom - bounds.top - track_height) / 2;
       RECT track{left, top, left + track_width, top + track_height};
-      const COLORREF surface = settings_theme::GetColor(COLOR_WINDOW);
       const COLORREF accent = settings_theme::GetColor(COLOR_HIGHLIGHT);
       const COLORREF off = Mix(settings_theme::GetColor(COLOR_3DSHADOW),
                                surface, state->hover ? 104 : 86);
@@ -1961,7 +1973,10 @@ inline void StyleGroupBox(HWND dialog, WORD id) {
     ::SetWindowSubclass(control, GroupBoxProc, 9, 0);
 }
 
-inline void StyleSwitch(HWND dialog, WORD id) {
+inline void StyleSwitch(
+    HWND dialog,
+    WORD id,
+    ToggleState::Background background = ToggleState::Background::Window) {
   EnsureGdiPlus();
   HWND control = ::GetDlgItem(dialog, id);
   if (!control)
@@ -1972,7 +1987,11 @@ inline void StyleSwitch(HWND dialog, WORD id) {
     if (!::SetWindowSubclass(control, SwitchProc, 5,
                              reinterpret_cast<DWORD_PTR>(state)))
       delete state;
+    else
+      existing = reinterpret_cast<DWORD_PTR>(state);
   }
+  if (existing)
+    reinterpret_cast<SwitchState*>(existing)->background = background;
 }
 
 inline void StyleCombo(HWND dialog, WORD id) {
@@ -2173,7 +2192,8 @@ inline void Install(HWND dialog, Page active, const InstallOptions& options) {
   };
   create_sidebar_separator(action_separator_y);
   create_sidebar_separator(folder_separator_y);
-  const int appearance_y = action_separator_y - vertical(6) - item_height;
+  const int update_y = action_separator_y - vertical(6) - item_height;
+  const int appearance_y = update_y - item_height - item_gap;
   create_sidebar_separator(appearance_y - vertical(6) - separator_height);
   HWND appearance = Create(
       dialog, L"BUTTON",
@@ -2185,6 +2205,16 @@ inline void Install(HWND dialog, Page active, const InstallOptions& options) {
       !::SetWindowSubclass(appearance, NavProc, 1,
                            reinterpret_cast<DWORD_PTR>(appearance_state)))
     delete appearance_state;
+  HWND update =
+      Create(dialog, L"BUTTON",
+             LocalText(L"升级提示弹窗", L"升級提示彈窗", L"Update popup"),
+             BS_PUSHBUTTON | BS_FLAT | WS_TABSTOP, kUpdateNotification, margin,
+             update_y, content_width, item_height);
+  auto* update_state = new NavState{false, false, false, Page::Input};
+  if (!update ||
+      !::SetWindowSubclass(update, NavProc, 1,
+                           reinterpret_cast<DWORD_PTR>(update_state)))
+    delete update_state;
   HWND folder =
       Create(dialog, L"BUTTON", options.user_folder,
              BS_PUSHBUTTON | BS_FLAT | WS_TABSTOP, kUserFolder, folder_link_x,

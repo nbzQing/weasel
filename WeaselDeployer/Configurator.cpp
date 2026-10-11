@@ -11,6 +11,7 @@
 #include "WanxiangSchemeManager.h"
 #include "SettingsPerformance.h"
 #include "SettingsAppearancePopup.h"
+#include "SettingsUpdateNotificationPopup.h"
 #include "DictManagementDialog.h"
 #include <WeaselConstants.h>
 #include <WeaselIPC.h>
@@ -208,7 +209,15 @@ LRESULT CALLBACK SettingsHostProc(HWND window,
                                   WPARAM wparam,
                                   LPARAM lparam) {
   if (message == settings_theme::kOpen) {
+    if (::IsWindow(settings_updates::Popup().window()))
+      ::SendMessageW(settings_updates::Popup().window(), WM_CLOSE, 0, 0);
     settings_theme::Popup().Open(window, reinterpret_cast<HWND>(lparam));
+    return 0;
+  }
+  if (message == settings_navigation::kOpenUpdateNotification) {
+    if (::IsWindow(settings_theme::Popup().window()))
+      ::SendMessageW(settings_theme::Popup().window(), WM_CLOSE, 0, 0);
+    settings_updates::Popup().Open(window, reinterpret_cast<HWND>(lparam));
     return 0;
   }
   if (message == WM_ERASEBKGND) {
@@ -223,6 +232,7 @@ LRESULT CALLBACK SettingsHostProc(HWND window,
       message == WM_SYSCOLORCHANGE || message == WM_THEMECHANGED) {
     settings_theme::Update(window);
     settings_theme::Popup().SystemChanged();
+    settings_updates::Popup().SystemChanged();
   }
   if (message == WM_CLOSE) {
     const HWND active =
@@ -794,6 +804,8 @@ int Configurator::ConfigureSettings(settings_navigation::Page initial_page) {
     }
 
     if (settings_theme::Popup().Translate(message))
+      continue;
+    if (settings_updates::Popup().Translate(message))
       continue;
 
     if (!message.hwnd &&

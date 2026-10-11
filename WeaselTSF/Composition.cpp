@@ -121,6 +121,54 @@ bool R21ReadMsaaCaret(HWND expectedView,
   return true;
 }
 
+bool ReadWin32Caret(HWND expectedView, RECT& caretRect) {
+  GUITHREADINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!::GetGUIThreadInfo(0, &info) || !info.hwndFocus || !info.hwndCaret)
+    return false;
+
+  DWORD focusProcessId = 0;
+  ::GetWindowThreadProcessId(info.hwndFocus, &focusProcessId);
+  const HWND root = ::GetAncestor(info.hwndFocus, GA_ROOT);
+  const HWND foreground = ::GetForegroundWindow();
+  if (focusProcessId != ::GetCurrentProcessId() || !root ||
+      root != ::GetAncestor(foreground, GA_ROOT) ||
+      root != ::GetAncestor(info.hwndCaret, GA_ROOT) ||
+      (expectedView && root != ::GetAncestor(expectedView, GA_ROOT)))
+    return false;
+
+  POINT topLeft = {info.rcCaret.left, info.rcCaret.top};
+  POINT bottomRight = {info.rcCaret.right, info.rcCaret.bottom};
+  // rcCaret is relative to hwndCaret, not to the application's top-level
+  // window. ClientToScreen also accounts for a monitor with a negative origin.
+  if (!::ClientToScreen(info.hwndCaret, &topLeft) ||
+      !::ClientToScreen(info.hwndCaret, &bottomRight))
+    return false;
+  const RECT screenCaret = {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+  RECT rootRect = {};
+  RECT intersection = {};
+  if (screenCaret.right < screenCaret.left ||
+      screenCaret.bottom <= screenCaret.top ||
+      !::GetWindowRect(root, &rootRect) ||
+      !::IntersectRect(&intersection, &screenCaret, &rootRect))
+    return false;
+  caretRect = screenCaret;
+  return true;
+}
+
+bool ReadScreenCaret(HWND expectedView, RECT& caretRect) {
+  if (ReadWin32Caret(expectedView, caretRect))
+    return true;
+  HWND focus = nullptr;
+  HWND root = nullptr;
+  return R21ReadMsaaCaret(expectedView, caretRect, focus, root);
+}
+
+bool NearAnchor(const RECT& a, const RECT& b, LONGLONG tolerance) {
+  return llabs(static_cast<LONGLONG>(a.left) - b.left) <= tolerance &&
+         llabs(static_cast<LONGLONG>(a.bottom) - b.bottom) <= tolerance;
+}
+
 RECT R21TranslateRect(const RECT& source, LONG dx, LONG dy) {
   RECT result = source;
   result.left += dx;
@@ -283,11 +331,13 @@ class CGetTextExtentEditSession : public CEditSession {
                             com_ptr<ITfContext> pContext,
                             com_ptr<ITfContextView> pContextView,
                             com_ptr<ITfComposition> pComposition,
-                            bool enhancedPosition)
+                            bool enhancedPosition,
+                            bool initialPosition)
       : CEditSession(pTextService, pContext) {
     _pContextView = pContextView;
     _pComposition = pComposition;
     _enhancedPosition = enhancedPosition;
+    _initialPosition = initialPosition;
   }
 
   /* ITfEditSession */
@@ -297,6 +347,7 @@ class CGetTextExtentEditSession : public CEditSession {
   com_ptr<ITfContextView> _pContextView;
   com_ptr<ITfComposition> _pComposition;
   bool _enhancedPosition;
+  bool _initialPosition;
 };
 
 STDMETHODIMP CGetTextExtentEditSession::DoEditSession(TfEditCookie ec) {
@@ -325,26 +376,36 @@ STDMETHODIMP CGetTextExtentEditSession::DoEditSession(TfEditCookie ec) {
 
   if ((_pContextView->GetTextExt(ec, pRange, &rc, &fClipped)) == S_OK &&
       (rc.left != 0 || rc.top != 0)) {
-    // get the foreground window pos and check if rc from GetTextExt is out of
-    // window
-    if (_enhancedPosition) {
-      HWND hwnd;
-      RECT rcForegroundWindow;
-      hwnd = GetForegroundWindow();
-      ::GetWindowRect(hwnd, &rcForegroundWindow);
-
-      if (rc.left < rcForegroundWindow.left ||
-          rc.left > rcForegroundWindow.right ||
-          rc.top < rcForegroundWindow.top ||
-          rc.top > rcForegroundWindow.bottom) {
-        POINT pt;
-        bool hasCaret = ::GetCaretPos(&pt);
-        int offsetx = rcForegroundWindow.left - rc.left + (hasCaret ? pt.x : 0);
-        int offsety = rcForegroundWindow.top - rc.top + (hasCaret ? pt.y : 0);
-        rc.left += offsetx;
-        rc.right += offsetx;
-        rc.top += offsety;
-        rc.bottom += offsety;
+    HWND view = nullptr;
+    _pContextView->GetWnd(&view);
+    RECT foregroundRect = {};
+    const HWND foreground = ::GetForegroundWindow();
+    const bool haveForegroundRect =
+        foreground && ::GetWindowRect(foreground, &foregroundRect);
+    const bool outsideForeground =
+        haveForegroundRect &&
+        (rc.left < foregroundRect.left || rc.left > foregroundRect.right ||
+         rc.top < foregroundRect.top || rc.top > foregroundRect.bottom);
+    if (_enhancedPosition || _initialPosition) {
+      RECT caret = {};
+      if (ReadScreenCaret(view, caret)) {
+        bool staleInitialExtent = false;
+        if (_initialPosition && !NearAnchor(rc, caret, 64) &&
+            _pComposition != nullptr) {
+          com_ptr<ITfRange> endRange;
+          RECT endRect = {};
+          BOOL endClipped = FALSE;
+          staleInitialExtent = _pComposition->GetRange(&endRange) == S_OK &&
+                               endRange->Collapse(ec, TF_ANCHOR_END) == S_OK &&
+                               _pContextView->GetTextExt(ec, endRange, &endRect,
+                                                         &endClipped) == S_OK &&
+                               NearAnchor(rc, endRect, 32);
+        }
+        // A short new composition cannot explain a large distance between
+        // START and the actual caret. Do not display the host's provisional
+        // layout at an unrelated point before its next layout notification.
+        if ((_enhancedPosition && outsideForeground) || staleInitialExtent)
+          rc = caret;
       }
     }
     _pTextService->_SetCompositionPosition(rc);
@@ -925,9 +986,9 @@ BOOL WeaselTSF::_UpdateCompositionWindow(com_ptr<ITfContext> pContext) {
   if (pContext->GetActiveView(&pContextView) != S_OK)
     return FALSE;
   com_ptr<CGetTextExtentEditSession> pEditSession;
-  pEditSession.Attach(
-      new CGetTextExtentEditSession(this, pContext, pContextView, _pComposition,
-                                    _cand->style().enhanced_position));
+  pEditSession.Attach(new CGetTextExtentEditSession(
+      this, pContext, pContextView, _pComposition,
+      _cand->style().enhanced_position, !_r21HaveNormalPosition));
   if (pEditSession == NULL) {
     return FALSE;
   }

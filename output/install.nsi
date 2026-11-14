@@ -22,15 +22,23 @@ Unicode true
 !define REG_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Weasel"
 
 ; Optional runtime DLLs can remain loaded in packaged hosts after WeaselServer
-; exits. Extract them under a temporary name and let Windows replace the locked
-; destination on reboot when an immediate replacement is not possible.
+; exits. Never delete the working DLL before its replacement is ready: if a
+; host still has it open, queue one atomic replacement for the next reboot.
 !macro InstallOptionalLockedFile Source Destination
   !if /FileExists "${Source}"
-    Delete "${Destination}.new"
-    File "/oname=${Destination}.new" "${Source}"
+    File "/oname=${Destination}.new.${WEASEL_BUILD}" "${Source}"
     SetFileAttributes "${Destination}" NORMAL
-    Delete /REBOOTOK "${Destination}"
-    Rename /REBOOTOK "${Destination}.new" "${Destination}"
+    System::Call 'kernel32::MoveFileExW(w "${Destination}.new.${WEASEL_BUILD}", w "${Destination}", i 1)i.r0'
+    ${If} $0 == 0
+      ; MOVEFILE_REPLACE_EXISTING | MOVEFILE_DELAY_UNTIL_REBOOT. The old DLL
+      ; remains usable until Windows performs the queued replacement.
+      System::Call 'kernel32::MoveFileExW(w "${Destination}.new.${WEASEL_BUILD}", w "${Destination}", i 5)i.r0'
+      ${If} $0 == 0
+        DetailPrint "Unable to replace optional runtime ${Destination}; keeping the current file."
+      ${Else}
+        SetRebootFlag true
+      ${EndIf}
+    ${EndIf}
   !endif
 !macroend
 

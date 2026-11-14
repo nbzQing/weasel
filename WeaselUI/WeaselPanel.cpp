@@ -53,6 +53,10 @@ constexpr int kDwmwcpRound = 2;            // DWMWCP_ROUND
 constexpr int kDwmsbtTransientWindow = 3;  // DWMSBT_TRANSIENTWINDOW
 constexpr COLORREF kDwmColorNone = 0xFFFFFFFEu;
 constexpr BYTE kAcrylicTintAlpha = 0x18;
+// A geometry/visibility ACK cannot prove that DWM has presented the material
+// yet. Dark schemes use transparent ordinary candidate rows, so retain enough
+// foreground tint to keep white text readable during a missing Acrylic frame.
+constexpr BYTE kDarkAcrylicTintAlpha = 0xC0;
 
 bool HasVisibleCandidateSurface(bool inlinePreedit,
                                 bool contextEmpty,
@@ -1840,7 +1844,10 @@ bool ExternalLeaseReady(HWND client, const ExternalAcrylicState* state) {
          ExternalProperty(host, kExtAckClient) ==
              reinterpret_cast<ULONG_PTR>(client) &&
          ExternalProperty(host, kExtAckToken) == state->token &&
-         ExternalProperty(host, kExtAckSequence) != 0 &&
+         // The server may still acknowledge the previous monitor position.
+         // Never lower the foreground alpha until it has placed this exact
+         // snapshot behind the candidate window.
+         ExternalProperty(host, kExtAckSequence) == state->snapshot.sequence &&
          ExternalProperty(host, kExtOwner) ==
              reinterpret_cast<ULONG_PTR>(state->candidate) &&
          ExternalFresh(::GetTickCount(), static_cast<DWORD>(ExternalProperty(
@@ -2927,6 +2934,8 @@ void WeaselPanel::_CreateLayout() {
 void WeaselPanel::Refresh() {
   const bool acrylicModeChanged = _UpdateAcrylicBackdropMode();
   const bool styleChanged = m_ostyle != m_style;
+  const UINT previousDpi = dpi;
+  m_redraw_by_monitor_change = false;
   LocalAcrylicGeometryBatch geometry(m_hWnd);
   IncrementPlacementDiag(m_hWnd, kPlacementDiagRefreshCount);
   bool should_show_icon =
@@ -2974,7 +2983,8 @@ void WeaselPanel::Refresh() {
     CommitPlacementDiagEvent(m_hWnd,
                              PlacementDiagEvent::RefreshBeforeReposition);
     _RepositionWindow();
-    if (m_ctx != m_octx || acrylicModeChanged || styleChanged) {
+    if (m_ctx != m_octx || acrylicModeChanged || styleChanged ||
+        previousDpi != dpi || m_redraw_by_monitor_change) {
       m_octx = m_ctx;
       RedrawWindow();
     }
@@ -3855,11 +3865,28 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
       CRect backrc = m_layout->GetContentRect();
       COLORREF backColor = m_style.back_color;
       COLORREF shadowColor = m_style.shadow_color;
-      const bool localAcrylic =
-          m_acrylicBackdropEnabled && !ExternalBorrowed(m_acrylicBackdrop);
+      // The foreground is a separate layered window.  On a monitor move the
+      // Acrylic host can still be hidden or at its previous screen position
+      // while this bitmap is painted.  Keep the configured background until
+      // the host actually covers the current content rectangle.
+      bool localAcrylic = false;
+      if (m_acrylicBackdropEnabled && m_acrylicBackdrop &&
+          !ExternalBorrowed(m_acrylicBackdrop) &&
+          ::IsWindowVisible(m_acrylicBackdrop)) {
+        CRect panelRect, backdropRect;
+        if (GetWindowRect(&panelRect) &&
+            ::GetWindowRect(m_acrylicBackdrop, &backdropRect)) {
+          localAcrylic = backdropRect.left <= panelRect.left + backrc.left &&
+                         backdropRect.top <= panelRect.top + backrc.top &&
+                         backdropRect.right >= panelRect.left + backrc.right &&
+                         backdropRect.bottom >= panelRect.top + backrc.bottom;
+        }
+      }
       if (localAcrylic || ExternalForegroundReady(m_acrylicBackdrop)) {
         if (COLORNOTTRANSPARENT(backColor))
-          backColor = WithAlpha(backColor, kAcrylicTintAlpha);
+          backColor = WithAlpha(backColor, IsDarkColor(backColor)
+                                               ? kDarkAcrylicTintAlpha
+                                               : kAcrylicTintAlpha);
         shadowColor = TRANS_COLOR;
       }
       _HighlightText(memDC, backrc, backColor, shadowColor,
@@ -4248,6 +4275,21 @@ void WeaselPanel::_RepositionWindow(const bool& adj) {
   memset(&rcWorkArea, 0, sizeof(rcWorkArea));
   HMONITOR hMonitor = MonitorFromRect(m_inputPos, MONITOR_DEFAULTTONEAREST);
   if (hMonitor) {
+    UINT monitorDpiX = 96, monitorDpiY = 96;
+    if (SUCCEEDED(GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &monitorDpiX,
+                                   &monitorDpiY)) &&
+        monitorDpiX != dpi) {
+      // MoveTo can reach a different-DPI monitor without WM_DPICHANGED.  A
+      // repaint alone leaves the old monitor's layout size and Acrylic content
+      // rectangle in place, so rebuild before calculating the final position.
+      _InitFontRes();
+      _CreateLayout();
+      CDCHandle dc = GetDC();
+      m_layout->DoLayout(dc, pDWR);
+      ReleaseDC(dc);
+      _ResizeWindow();
+      m_redraw_by_monitor_change = true;
+    }
     MONITORINFO info;
     info.cbSize = sizeof(MONITORINFO);
     if (GetMonitorInfo(hMonitor, &info)) {

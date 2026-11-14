@@ -3266,7 +3266,10 @@ void SwitcherSettingsDialog::StartSchemeUpdate(
     const auto deployment_started =
         std::filesystem::file_time_type::clock::now();
     Configurator configurator;
-    const bool deployed = configurator.UpdateWorkspace(false) == 0;
+    // The scheme transaction stays open until deployment succeeds. Running the
+    // bundled installer here would mistake it for an interrupted transaction
+    // and roll back the files that were just installed.
+    const bool deployed = configurator.UpdateWorkspace(false, false) == 0;
     const std::wstring deployment_error =
         deployed ? std::wstring() : CollectDeploymentErrors(deployment_started);
     if (operation->with_model && !deployed) {
@@ -3289,7 +3292,7 @@ void SwitcherSettingsDialog::StartSchemeUpdate(
       std::wstring rollback_error;
       operation->phase.store(SchemeUpdateOperation::Phase::RollingBack);
       operation->restored = manager.Rollback(&rollback_error) &&
-                            configurator.UpdateWorkspace(false) == 0;
+                            configurator.UpdateWorkspace(false, false) == 0;
       operation->error =
           operation->restored
               ? L"无法完成输入方案安装记录，已恢复更新前的文件。"

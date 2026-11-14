@@ -844,6 +844,12 @@ bool WanxiangSchemeManager::SaveInstalledVersion(std::wstring* error) const {
 bool WanxiangSchemeManager::Commit(std::wstring* error) {
   if (!installed_)
     return false;
+  if (ReadVersionFile(user_data_ / L"version.txt") !=
+      NormalizedVersion(installed_tag_)) {
+    if (error)
+      *error = L"重新部署后输入方案版本文件与待安装版本不一致。";
+    return false;
+  }
   std::wstring registry_error;
   if (!SaveInstalledVersion(&registry_error))
     LOG(WARNING) << "Unable to save schema update bookkeeping: "

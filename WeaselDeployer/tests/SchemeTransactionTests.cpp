@@ -31,6 +31,7 @@ std::string Read(const fs::path& path) {
 }
 
 void Populate(const fs::path& user, const fs::path& stage) {
+  Write(user / "version.txt", "17.9.0\n");
   Write(user / "wanxiang_lite.dict.yaml", "old managed");
   Write(user / "custom_phrase.txt", "user phrase");
   Write(user / "custom_phrase.dict.yaml", "personal phrase dictionary");
@@ -40,6 +41,7 @@ void Populate(const fs::path& user, const fs::path& stage) {
   Write(user / "wanxiang_english.schema.yaml", "user non-lite schema");
   Write(user / "default.yaml", "user global settings");
   Write(stage / "wanxiang_lite.dict.yaml", "new managed");
+  Write(stage / "version.txt", "18.0.0\n");
   Write(stage / "dicts" / "added.lite.dict.yaml", "new file");
   Write(stage / "custom_phrase.txt", "upstream phrase");
   Write(stage / "custom_phrase.dict.yaml", "upstream phrase dictionary");
@@ -69,6 +71,8 @@ int main(int argc, char** argv) {
       Require(manager.InstallStaged(stage, &error), "scheme install failed");
       Require(Read(user / "wanxiang_lite.dict.yaml") == "new managed",
               "managed file was not replaced");
+      Require(Read(user / "version.txt") == "18.0.0\n",
+              "installed scheme version was not replaced");
       Require(Read(user / "dicts" / "added.lite.dict.yaml") == "new file",
               "new managed file was not installed");
       Require(Read(user / "custom_phrase.txt") == "user phrase",
@@ -103,6 +107,26 @@ int main(int argc, char** argv) {
       }
       Require(!fs::exists(user / ".weasel-packages" / "scheme-transaction"),
               "committed transaction was not removed");
+    }
+
+    {
+      const auto user = root / "stale-user";
+      const auto stage = root / "stale-stage";
+      Populate(user, stage);
+      WanxiangSchemeManager manager(user);
+      manager.installed_tag_ = L"v18.0.0";
+      std::wstring error;
+      Require(manager.InstallStaged(stage, &error),
+              "stale-version setup failed");
+      // A second manager used by redeployment previously recovered the active
+      // update as if it were an interrupted transaction.
+      WanxiangSchemeManager redeployment(user);
+      Require(redeployment.RecoverInterruptedTransaction(&error),
+              "simulated redeployment recovery failed");
+      Require(Read(user / "version.txt") == "17.9.0\n",
+              "simulated redeployment did not restore the prior version");
+      Require(!manager.Commit(&error),
+              "stale version was reported as a successful installation");
     }
 
     {

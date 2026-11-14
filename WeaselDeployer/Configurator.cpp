@@ -952,7 +952,8 @@ int Configurator::ConfigureSettings(settings_navigation::Page initial_page) {
   return navigation_test_result;
 }
 
-int Configurator::UpdateWorkspace(bool report_errors) {
+int Configurator::UpdateWorkspace(bool report_errors,
+                                  bool install_bundled_scheme) {
   const bool preview = weasel::IsSettingsPreviewMode();
   HANDLE hMutex = CreateMutex(
       NULL, TRUE,
@@ -974,7 +975,7 @@ int Configurator::UpdateWorkspace(bool report_errors) {
     return 1;
   }
 
-  if (!preview) {
+  if (!preview && install_bundled_scheme) {
     WanxiangSchemeManager bundled_scheme;
     bool updated = false;
     std::wstring error;

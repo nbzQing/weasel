@@ -18,7 +18,8 @@ class Configurator {
   int ConfigureFonts();
   int ConfigureLayoutEffects();
   int ConfigureStatusIcons();
-  int UpdateWorkspace(bool report_errors = false);
+  int UpdateWorkspace(bool report_errors = false,
+                      bool install_bundled_scheme = true);
   int DictManagement();
   int SyncUserData();
 

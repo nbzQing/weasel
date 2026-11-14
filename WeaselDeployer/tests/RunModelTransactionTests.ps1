@@ -1,4 +1,4 @@
-param([switch]$NetworkProbe)
+param([switch]$NetworkProbe, [switch]$SchemeOnly)
 
 $ErrorActionPreference = 'Stop'
 $source = Split-Path $PSScriptRoot -Parent
@@ -97,8 +97,10 @@ $modelTests = $modelTests.Replace($replacement, $replacementCheck.Trim())
 Write-TestFile 'ModelTransactionTests.cpp' $modelTests
 Push-Location $build
 try {
-    & cl.exe /nologo /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE /I. WanxiangModelManager.cpp ModelTransactionTests.cpp /Fe:ModelTransactionTests.exe /link ole32.lib shell32.lib bcrypt.lib advapi32.lib uuid.lib
-    if ($LASTEXITCODE -ne 0) { throw 'Model transaction test build failed' }
+    if (-not $SchemeOnly) {
+        & cl.exe /nologo /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE /I. WanxiangModelManager.cpp ModelTransactionTests.cpp /Fe:ModelTransactionTests.exe /link ole32.lib shell32.lib bcrypt.lib advapi32.lib uuid.lib
+        if ($LASTEXITCODE -ne 0) { throw 'Model transaction test build failed' }
+    }
     # GitHub's workspace is on D: and LocalAppData is on C:, exercising the
     # same cross-volume copy/rename path used by a custom Rime user folder.
     $fixtureRoot = if ($env:GITHUB_WORKSPACE) {
@@ -107,8 +109,10 @@ try {
     $cacheRoot = if ($env:GITHUB_WORKSPACE) {
         Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('weasel-model-test-cache-' + [guid]::NewGuid())
     } else { Join-Path $build 'cache' }
-    & .\ModelTransactionTests.exe $fixtureRoot $cacheRoot
-    if ($LASTEXITCODE -ne 0) { throw "Model transaction tests failed (exit $LASTEXITCODE)" }
+    if (-not $SchemeOnly) {
+        & .\ModelTransactionTests.exe $fixtureRoot $cacheRoot
+        if ($LASTEXITCODE -ne 0) { throw "Model transaction tests failed (exit $LASTEXITCODE)" }
+    }
     & cl.exe /nologo /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE /I. WanxiangSchemeManager.cpp SchemeTransactionTests.cpp /Fe:SchemeTransactionTests.exe /link advapi32.lib bcrypt.lib ole32.lib shell32.lib uuid.lib winhttp.lib
     if ($LASTEXITCODE -ne 0) { throw 'Scheme transaction test build failed' }
     & .\SchemeTransactionTests.exe (Join-Path $fixtureRoot 'scheme')
@@ -124,14 +128,16 @@ try {
         & .\SchemeDownloadProbe.exe (Join-Path $fixtureRoot 'scheme-download') $formal.tag_name $downloadUrl $asset.hash_value ([string]$asset.size)
         if ($LASTEXITCODE -ne 0) { throw "Scheme download probe failed (exit $LASTEXITCODE)" }
     }
-    & cl.exe /nologo /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE /I. WanxiangUpdateManager.cpp UpdateManagerTests.cpp /Fe:UpdateManagerTests.exe /link advapi32.lib winhttp.lib
-    if ($LASTEXITCODE -ne 0) { throw 'Update manager test build failed' }
-    if ($NetworkProbe) {
-        & .\UpdateManagerTests.exe --network
-    } else {
-        & .\UpdateManagerTests.exe
+    if (-not $SchemeOnly) {
+        & cl.exe /nologo /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE /I. WanxiangUpdateManager.cpp UpdateManagerTests.cpp /Fe:UpdateManagerTests.exe /link advapi32.lib winhttp.lib
+        if ($LASTEXITCODE -ne 0) { throw 'Update manager test build failed' }
+        if ($NetworkProbe) {
+            & .\UpdateManagerTests.exe --network
+        } else {
+            & .\UpdateManagerTests.exe
+        }
+        if ($LASTEXITCODE -ne 0) { throw "Update manager tests failed (exit $LASTEXITCODE)" }
     }
-    if ($LASTEXITCODE -ne 0) { throw "Update manager tests failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
     Remove-Item -LiteralPath ('Registry::HKEY_CURRENT_USER\' + $registryRoot) `

@@ -23,7 +23,7 @@ class weasel::UIImpl {
   void Show();
   void Hide();
   void ShowWithTimeout(size_t millisec);
-  void UpdateInputPosition(RECT const& rc);
+  void UpdateInputPosition(RECT const& rc, bool trusted);
   void CancelInitialShow();
   bool IsShown() const { return shown; }
   void ReloadUserSettings() {
@@ -45,6 +45,8 @@ class weasel::UIImpl {
   bool shown;
   bool initialShowPending = false;
   bool hasFreshAnchor = false;
+  bool hasTrustedAnchor = false;
+  RECT lastAnchor = {};
   DWORD initialShowTick = 0;
   DWORD latestAnchorTick = 0;
 
@@ -74,15 +76,17 @@ void UIImpl::ScheduleInitialShow() {
   // extent. Keep the first frame hidden while subsequent layout notifications
   // replace a provisional caret rectangle, regardless of the host application.
   constexpr DWORD kAnchorQuietMs = 50;
+  constexpr DWORD kTrustedAnchorQuietMs = 16;
   constexpr DWORD kMaximumWaitMs = 120;
   const DWORD now = GetTickCount();
   const DWORD elapsed = now - initialShowTick;
   const DWORD remaining =
       elapsed < kMaximumWaitMs ? kMaximumWaitMs - elapsed : 0;
   const DWORD anchorElapsed = now - latestAnchorTick;
-  const DWORD quietRemaining = hasFreshAnchor && anchorElapsed < kAnchorQuietMs
-                                   ? kAnchorQuietMs - anchorElapsed
-                                   : 0;
+  const DWORD quietMs =
+      hasTrustedAnchor ? kTrustedAnchorQuietMs : kAnchorQuietMs;
+  const DWORD quietRemaining =
+      hasFreshAnchor && anchorElapsed < quietMs ? quietMs - anchorElapsed : 0;
   const DWORD delay =
       hasFreshAnchor ? min(quietRemaining, remaining) : remaining;
   if (delay == 0) {
@@ -120,15 +124,25 @@ void UIImpl::CancelInitialShow() {
   initialShowPending = false;
 }
 
-void UIImpl::UpdateInputPosition(RECT const& rc) {
+void UIImpl::UpdateInputPosition(RECT const& rc, bool trusted) {
   if (!panel.IsWindow())
     return;
   panel.MoveTo(rc);
   if (rc.bottom > rc.top) {
+    // Layout callbacks may repeat the same rectangle. Only a changed anchor
+    // needs a new settling period; duplicate callbacks must not postpone the
+    // first visible frame.
+    if (!hasFreshAnchor || !::EqualRect(&lastAnchor, &rc)) {
+      lastAnchor = rc;
+      latestAnchorTick = GetTickCount();
+      hasTrustedAnchor = trusted;
+    } else if (trusted) {
+      hasTrustedAnchor = true;
+    }
     hasFreshAnchor = true;
-    latestAnchorTick = GetTickCount();
   } else {
     hasFreshAnchor = false;
+    hasTrustedAnchor = false;
   }
   if (initialShowPending)
     ScheduleInitialShow();
@@ -152,6 +166,7 @@ void UIImpl::Hide() {
   panel.ShowWindow(SW_HIDE);
   shown = false;
   hasFreshAnchor = false;
+  hasTrustedAnchor = false;
   if (timer) {
     KillTimer(panel.m_hWnd, AUTOHIDE_TIMER);
     timer = 0;
@@ -189,6 +204,7 @@ bool UI::Create(HWND parent) {
     pimpl_->CancelInitialShow();
     pimpl_->shown = false;
     pimpl_->hasFreshAnchor = false;
+    pimpl_->hasTrustedAnchor = false;
     pimpl_->panel.Create(
         parent, 0, 0, WS_POPUP,
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
@@ -218,6 +234,7 @@ void UI::Destroy(bool full) {
     pimpl_->CancelInitialShow();
     pimpl_->shown = false;
     pimpl_->hasFreshAnchor = false;
+    pimpl_->hasTrustedAnchor = false;
     // destroy panel
     if (pimpl_->panel.IsWindow()) {
       pimpl_->panel.DestroyWindow();
@@ -274,9 +291,9 @@ void UI::ReloadUserSettings() {
     pimpl_->ReloadUserSettings();
 }
 
-void UI::UpdateInputPosition(RECT const& rc) {
+void UI::UpdateInputPosition(RECT const& rc, bool trusted) {
   if (pimpl_ && pimpl_->panel.IsWindow()) {
-    pimpl_->UpdateInputPosition(rc);
+    pimpl_->UpdateInputPosition(rc, trusted);
   }
 }
 

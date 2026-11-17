@@ -61,7 +61,7 @@ class UI {
   void Refresh();
 
   // 置输入焦点位置（光标跟随时移动候选窗）但不重绘
-  void UpdateInputPosition(RECT const& rc);
+  void UpdateInputPosition(RECT const& rc, bool trusted = false);
 
   // 更新界面显示内容
   void Update(Context const& ctx, Status const& status);

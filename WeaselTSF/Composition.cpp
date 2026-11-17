@@ -386,9 +386,12 @@ STDMETHODIMP CGetTextExtentEditSession::DoEditSession(TfEditCookie ec) {
         haveForegroundRect &&
         (rc.left < foregroundRect.left || rc.left > foregroundRect.right ||
          rc.top < foregroundRect.top || rc.top > foregroundRect.bottom);
+    bool trustedAnchor = false;
     if (_enhancedPosition || _initialPosition) {
       RECT caret = {};
       if (ReadScreenCaret(view, caret)) {
+        trustedAnchor =
+            !fClipped && !outsideForeground && NearAnchor(rc, caret, 24);
         bool staleInitialExtent = false;
         if (_initialPosition && !NearAnchor(rc, caret, 64) &&
             _pComposition != nullptr) {
@@ -404,11 +407,13 @@ STDMETHODIMP CGetTextExtentEditSession::DoEditSession(TfEditCookie ec) {
         // A short new composition cannot explain a large distance between
         // START and the actual caret. Do not display the host's provisional
         // layout at an unrelated point before its next layout notification.
-        if ((_enhancedPosition && outsideForeground) || staleInitialExtent)
+        if ((_enhancedPosition && outsideForeground) || staleInitialExtent) {
           rc = caret;
+          trustedAnchor = true;
+        }
       }
     }
-    _pTextService->_SetCompositionPosition(rc);
+    _pTextService->_SetCompositionPosition(rc, trustedAnchor);
   }
   return S_OK;
 }
@@ -998,7 +1003,7 @@ BOOL WeaselTSF::_UpdateCompositionWindow(com_ptr<ITfContext> pContext) {
   return SUCCEEDED(hr);
 }
 
-void WeaselTSF::_SetCompositionPosition(const RECT& rc) {
+void WeaselTSF::_SetCompositionPosition(const RECT& rc, bool trusted) {
   /* Test if rect is valid.
    * If it is invalid during CUAS test, we need to apply CUAS workaround */
   if (!_fCUASWorkaroundTested) {
@@ -1060,7 +1065,7 @@ void WeaselTSF::_SetCompositionPosition(const RECT& rc) {
   _r21HaveOutputPosition = true;
 
   m_client.UpdateInputPosition(output);
-  _cand->UpdateInputPosition(output);
+  _cand->UpdateInputPosition(output, trusted && !(_r21CorrectionActive));
 }
 
 /* Inline Preedit */

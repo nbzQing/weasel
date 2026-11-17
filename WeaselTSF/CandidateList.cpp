@@ -336,9 +336,9 @@ void CCandidateList::UpdateStyle(const UIStyle& sty) {
   _ui->style() = sty;
 }
 
-void CCandidateList::UpdateInputPosition(RECT const& rc) {
+void CCandidateList::UpdateInputPosition(RECT const& rc, bool trusted) {
   if (!_settingsFollowEnabled) {
-    _ui->UpdateInputPosition(rc);
+    _ui->UpdateInputPosition(rc, trusted);
     return;
   }
   ++_followSourceUpdates;

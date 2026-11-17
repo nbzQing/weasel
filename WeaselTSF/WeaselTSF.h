@@ -129,7 +129,7 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _IsComposing();
   BOOL _IsCurrentComposition(ITfComposition* pComposition);
   void _SetComposition(com_ptr<ITfComposition> pComposition);
-  void _SetCompositionPosition(const RECT& rc);
+  void _SetCompositionPosition(const RECT& rc, bool trusted = false);
   BOOL _UpdateCompositionWindow(com_ptr<ITfContext> pContext);
   void _FinalizeComposition();
   void _AbortComposition(bool clear = true);

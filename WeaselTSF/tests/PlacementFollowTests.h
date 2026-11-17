@@ -22,7 +22,11 @@ bool R21ReadMsaaCaret(HWND, RECT& rect, HWND& focus, HWND& root) {
 }
 struct PositionSink {
   RECT output = {};
-  void UpdateInputPosition(const RECT& rect) { output = rect; }
+  bool trustedAnchor = false;
+  void UpdateInputPosition(const RECT& rect, bool trusted = false) {
+    output = rect;
+    trustedAnchor = trusted;
+  }
 };
 struct WeaselTSF {
 #include "obj/placement-state.inc"
@@ -39,7 +43,7 @@ struct WeaselTSF {
   BOOL _IsComposing() { return composing; }
   void _R21ResetPlacementFollow();
   void _R21PlacementFollowTick(com_ptr<ITfContext> context);
-  void _SetCompositionPosition(const RECT& rect);
+  void _SetCompositionPosition(const RECT& rect, bool trusted = false);
   void _UpdateCompositionWindow(com_ptr<ITfContext>) {
     if (deferred)
       pending = true;
@@ -121,6 +125,18 @@ struct Fixture {
 };
 
 void Run() {
+  {
+    Fixture f;
+    f.service._SetCompositionPosition(f.service.hostNormal, true);
+    Check(f.service.candidate.trustedAnchor,
+          "confirmed caret did not reach the candidate window");
+    f.Scroll(0, -270);
+    f.service._SetCompositionPosition(f.service.hostNormal, true);
+    Check(!f.service.candidate.trustedAnchor,
+          "viewport-corrected anchor was incorrectly marked trusted");
+  }
+  std::cout << "PASS: trusted caret bypasses only uncorrected placement\n";
+
   for (int order = 0; order < 3; ++order) {
     Fixture f;
     f.Scroll(0, -270);
